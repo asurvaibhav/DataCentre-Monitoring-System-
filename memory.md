@@ -371,3 +371,56 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 - Add auth/RBAC for operator identity instead of the demo `operator@facility` default.
 - Harden WebSocket fan-out across multiple workers (Redis pub/sub) before horizontal scaling.
 - Add backend tests for dedupe/idempotent scans, requeue-on-error, tenant isolation, and decision transitions.
+
+## Entry 008 — 2026-10-28 | Session: xor-warm-technical-redesign
+
+### Summary of Changes
+- Replaced the previous dark-sidebar/light-card presentation with the XOR Capacity Observatory visual language: warm canvas `#eae8e2`, ink `#292c29`, muted `#646861`, hairline `#bcbfb5`, soft line `#d4d7cc`, surface `#f4f3ee`, accent green `#34765f`, warning ochre `#8a5a2b`, critical brick `#a33a2f`, and the Segoe UI + Cascadia Code type pairing.
+- Rebuilt the shell around an 88px brand header and a horizontal numbered technical nav (01 Facility, 02 Queue, 03 Forecast, 04 Operator). Live queue and pending counts are shown in the nav; connection and last-update metadata sit on the right.
+- Removed the fixed sidebar and rewrote `App.tsx` with per-view editorial intros, a shared connection block, dismissible backend errors, and the three-part footer.
+- Rebuilt the rack map from the XOR isometric SVG geometry (960×590): floor grid, 12 cabinets, 2 cooling units, orientation mark, service-aisle label, live utilization readings, status-coloured outlines and dots. Kept keyboard selection, CSS rack lift, 80–130% zoom, and reset.
+- Rebuilt the facility page around the reference workspace: FIG. 01 caption, SVG plan, live inspector, dark view-controls bar, rack selector, six-cell resource coverage strip, four-stat strip, and incident overlay table with HITL drill-through.
+- Restyled the queue page as a technical tabbed table with priority, token, node/tenant, resource, utilization bar, lead time, confidence, hops, phase and flags columns, plus the live agent activity stream and pipeline/scan/refresh controls.
+- Restyled forecasting as a selector panel, divided stat strip, warm-palette SVG chart (green observed line, ink projection, green confidence cone, ochre safety margin), linked-incident panel, telemetry-window evidence panel, and regime-change notice.
+- Restyled the HITL console as an operator record with severity tag, seven-step phase track, six-cell evidence grid, RCA, read-only remediation options, immutable audit timeline, risk gate, operator notes, and approve/reject/defer actions.
+- Restyled `MetricCard`, `SeverityBadge`, and `ErrorBoundary` as flat technical primitives. Updated `index.html` title, description, and theme colour.
+- Responsive rules at 1100px and 680px adapt the nav, intro, floor plan, inspector, strips, phase track, evidence grid, and footer.
+
+### Touched Files
+- `memory.md` (this entry)
+- `frontend/index.html`
+- `frontend/tailwind.config.js`
+- `frontend/src/index.css`
+- `frontend/src/App.tsx`
+- `frontend/src/components/layout/Header.tsx`
+- `frontend/src/components/layout/Sidebar.tsx` (deleted)
+- `frontend/src/components/common/ErrorBoundary.tsx`
+- `frontend/src/components/common/MetricCard.tsx`
+- `frontend/src/components/common/SeverityBadge.tsx`
+- `frontend/src/components/rack-map/IsometricRackMap.tsx`
+- `frontend/src/components/rack-map/RackMapPage.tsx`
+- `frontend/src/components/queue-visualizer/TokenQueueVisualizer.tsx`
+- `frontend/src/components/forecasting/ForecastPage.tsx`
+- `frontend/src/components/forecasting/ForecastChart.tsx`
+- `frontend/src/components/hitl-console/HITLConsole.tsx`
+
+### Verification
+- `npx tsc --noEmit` and `npm run build` pass (50 modules, 216.58 kB JS, 30.59 kB CSS).
+- Live browser checks at `http://localhost:5173/`: canvas `rgb(234,232,226)`, ink `rgb(41,44,41)`, header exactly 88px, 12 selectable racks, 2 cooling units, 6 resource cells, 4 stat blocks, 12 incident rows, no console errors, no `NaN`, no horizontal overflow.
+- Rack click updates the inspector; rack selector toggles selection; zoom +/−/reset produce 110% and 100%; “Open incident” opens the correct token in the operator console.
+- Queue → run pipeline → token reaches `06_HUMAN_VERIFICATION`; pending tab exposes one row; row click opens HITL; approval records “Advisory approved by operator”, resolves the token, clears the pending count, and appends a seventh audit entry with the telemetry hash.
+- 375px iframe checks: no page overflow, nav fits, queue table scrolls inside its wrapper, forecast chart scales to 318px, HITL collapses to one column, evidence grid becomes 2×3, and the footer stacks.
+- Chart computed colours: observed `rgb(52,118,95)`, grid `rgb(212,215,204)`, projection `rgb(41,44,41)`, safety margin `rgb(138,90,43)`.
+
+### Architectural Impact
+- Presentation-only reskin. The backend, DTO contract, store, hooks, WebSocket client, tenant isolation, token queue, shared heap, and agent pipeline are unchanged.
+- Semantic design tokens remain centralised in `tailwind.config.js` plus CSS custom properties, so palette/type changes still require no data-logic edits.
+- No new runtime dependency was added; zoom, selection, and rack lift are React/CSS only.
+- The tool remains advisory and read-only: remediation options are simulated, and the human gate and immutable audit link remain visible in the operator view.
+
+### Next Pending Steps
+- Commit this redesign on `dev/ao02-core` (do not touch `main`).
+- Persist heap/queue state so decisions and audit history survive restarts.
+- Add auth/RBAC for operator identity and harden WebSocket fan-out for multiple workers.
+- Add backend regression tests for dedupe, requeue-on-error, tenant isolation, and decision transitions.
+- Optional polish: deep-link a HITL incident to its forecast series, add visual regression screenshots, and verify the 1440px desktop composition on hardware.

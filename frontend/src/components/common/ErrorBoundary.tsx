@@ -25,22 +25,23 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div className="flex min-h-screen items-center justify-center bg-brand-dark p-6 text-white">
-          <div className="w-full max-w-lg rounded-xl border border-brand-critical/40 bg-brand-critical/5 p-6">
-            <h1 className="text-lg font-semibold text-brand-critical">
+        <div className="flex min-h-screen items-center justify-center bg-brand-canvas p-6 text-brand-ink">
+          <section className="panel w-full max-w-lg p-6" role="alert">
+            <p className="eyebrow">SYSTEM FAULT</p>
+            <h1 className="mt-3 text-[25px] font-medium tracking-tight">
               The dashboard hit an unexpected error
             </h1>
-            <p className="mt-2 text-sm text-slate-400">
+            <p className="mt-3 text-xs leading-relaxed text-brand-muted">
               {this.state.error.message}
             </p>
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="mt-4 rounded-lg border border-brand-accent/40 bg-brand-accent/10 px-4 py-2 text-sm font-medium text-brand-accent hover:bg-brand-accent/20"
+              className="btn btn-primary mt-5"
             >
-              Reload dashboard
+              Reload dashboard ↗
             </button>
-          </div>
+          </section>
         </div>
       );
     }

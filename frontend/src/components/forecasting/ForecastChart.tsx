@@ -114,10 +114,10 @@ export function ForecastChart({
 
   if (loading) {
     return (
-      <div className="flex h-[360px] items-center justify-center rounded-xl border border-brand-surface bg-brand-surface/20">
+      <div className="panel flex h-[360px] items-center justify-center">
         <div className="text-center">
-          <div className="mx-auto h-5 w-5 animate-spin rounded-full border-2 border-brand-accent border-t-transparent" />
-          <p className="mt-3 text-xs text-slate-500">Loading telemetry window…</p>
+          <div className="mx-auto h-5 w-5 animate-spin rounded-full border border-brand-accent border-t-transparent" />
+          <p className="pending mt-3">Loading telemetry window…</p>
         </div>
       </div>
     );
@@ -125,14 +125,10 @@ export function ForecastChart({
 
   if (error) {
     return (
-      <div className="flex h-[360px] flex-col items-center justify-center rounded-xl border border-brand-surface bg-brand-surface/20">
-        <p className="max-w-sm text-center text-xs text-slate-400">{error}</p>
-        <button
-          type="button"
-          onClick={onRetry}
-          className="mt-3 rounded-lg border border-brand-accent/40 px-3 py-1.5 text-xs text-brand-accent hover:bg-brand-accent/10"
-        >
-          Retry
+      <div className="panel flex h-[360px] flex-col items-center justify-center">
+        <p className="max-w-sm text-center text-xs text-brand-muted">{error}</p>
+        <button type="button" onClick={onRetry} className="btn mt-4">
+          Retry ↗
         </button>
       </div>
     );
@@ -140,11 +136,9 @@ export function ForecastChart({
 
   if (!window || window.count === 0 || !model) {
     return (
-      <div className="flex h-[360px] flex-col items-center justify-center rounded-xl border border-brand-surface bg-brand-surface/20">
-        <p className="text-sm text-slate-400">No telemetry for this series.</p>
-        <p className="mt-1 text-xs text-slate-500">
-          Try another rack, tenant, or resource combination.
-        </p>
+      <div className="panel flex h-[360px] flex-col items-center justify-center">
+        <p className="text-sm text-brand-muted">No telemetry for this series.</p>
+        <p className="pending mt-2">Try another rack, tenant, or resource combination.</p>
       </div>
     );
   }
@@ -158,7 +152,10 @@ export function ForecastChart({
     PADDING.top + plotH - ((value - yMin) / Math.max(yMax - yMin, 1e-6)) * plotH;
 
   const historyPath = history
-    .map((point, index) => `${index === 0 ? "M" : "L"}${x(point.t).toFixed(1)},${y(point.value).toFixed(1)}`)
+    .map(
+      (point, index) =>
+        `${index === 0 ? "M" : "L"}${x(point.t).toFixed(1)},${y(point.value).toFixed(1)}`,
+    )
     .join(" ");
 
   const projectionPath = [
@@ -186,21 +183,27 @@ export function ForecastChart({
         );
 
   return (
-    <div className="rounded-xl border border-brand-surface bg-brand-surface/20">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-brand-surface px-4 py-3">
+    <section className="panel">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-brand-line-soft px-5 py-4">
         <div>
-          <h3 className="text-sm font-semibold text-white">
-            {window.resourceType.replace(/_/g, " ")} · {window.rackId} / {window.tenantId}
+          <p className="eyebrow">FORECAST SERIES</p>
+          <h3 className="mt-1 text-[15px] font-medium">
+            {window.resourceType.replace(/_/g, " ").toLowerCase()} · {window.rackId} /{" "}
+            {window.tenantId}
           </h3>
-          <p className="mt-0.5 text-[11px] text-slate-500">
-            {window.count} hourly points · {fmtDate(window.windowStart)} → {fmtDate(window.windowEnd)}
+          <p className="pending mt-1">
+            {window.count} hourly points · {fmtDate(window.windowStart)} →{" "}
+            {fmtDate(window.windowEnd)}
           </p>
         </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-semibold tabular-nums text-white">
-            {latest.value.toFixed(1)}
-          </span>
-          <span className="text-xs text-slate-400">{unit || window.points[0]?.unit}</span>
+        <div className="text-right">
+          <p className="pending">latest observation</p>
+          <div className="mt-1 flex items-baseline justify-end gap-2">
+            <span className="text-[27px] font-medium leading-none tracking-tight tabular-nums">
+              {latest.value.toFixed(1)}
+            </span>
+            <span className="pending">{unit || window.points[0]?.unit}</span>
+          </div>
         </div>
       </div>
 
@@ -208,12 +211,11 @@ export function ForecastChart({
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="h-auto w-full" role="img">
           <defs>
             <linearGradient id="historyFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.22" />
-              <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+              <stop offset="0%" stopColor="#34765f" stopOpacity="0.14" />
+              <stop offset="100%" stopColor="#34765f" stopOpacity="0" />
             </linearGradient>
           </defs>
 
-          {/* grid + y labels */}
           {gridValues.map((value) => (
             <g key={value}>
               <line
@@ -221,23 +223,19 @@ export function ForecastChart({
                 x2={WIDTH - PADDING.right}
                 y1={y(value)}
                 y2={y(value)}
-                stroke="#334155"
-                strokeDasharray="3 4"
-                strokeWidth={1}
+                className="chart-grid"
               />
               <text
                 x={PADDING.left - 8}
                 y={y(value) + 3}
                 textAnchor="end"
-                fontSize={10}
-                fill="#64748b"
+                className="chart-label"
               >
                 {value.toFixed(0)}
               </text>
             </g>
           ))}
 
-          {/* safety margin threshold */}
           {thresholdY !== null && (
             <g>
               <line
@@ -245,23 +243,20 @@ export function ForecastChart({
                 x2={WIDTH - PADDING.right}
                 y1={thresholdY}
                 y2={thresholdY}
-                stroke="#f59e0b"
-                strokeWidth={1.2}
-                strokeDasharray="6 4"
+                className="chart-threshold"
               />
               <text
                 x={WIDTH - PADDING.right}
                 y={thresholdY - 5}
                 textAnchor="end"
-                fontSize={10}
-                fill="#f59e0b"
+                className="chart-label"
+                fill="var(--warn)"
               >
                 safety margin {fmtPct(safetyMarginPct, 0)}
               </text>
             </g>
           )}
 
-          {/* history area */}
           <path
             d={`${historyPath} L${x(latest.t)},${PADDING.top + plotH} L${x(history[0].t)},${
               PADDING.top + plotH
@@ -269,38 +264,32 @@ export function ForecastChart({
             fill="url(#historyFill)"
           />
 
-          {/* confidence cone */}
           <path
             d={`M${upper} L${lower} Z`}
-            fill="#38bdf8"
-            fillOpacity={0.12}
+            fill="#34765f"
+            fillOpacity={0.07}
             stroke="none"
           />
 
-          {/* projection */}
-          <path
-            d={projectionPath}
-            fill="none"
-            stroke="#a78bfa"
-            strokeWidth={1.8}
-            strokeDasharray="6 4"
-          />
+          <path d={projectionPath} className="chart-projection" />
+          <path d={historyPath} className="chart-history" />
 
-          {/* history line */}
-          <path d={historyPath} fill="none" stroke="#38bdf8" strokeWidth={2} />
-
-          {/* now marker */}
           <line
             x1={x(latest.t)}
             x2={x(latest.t)}
             y1={PADDING.top}
             y2={PADDING.top + plotH}
-            stroke="#475569"
-            strokeWidth={1}
+            className="chart-now"
           />
-          <circle cx={x(latest.t)} cy={y(latest.value)} r={3.5} fill="#38bdf8" stroke="#0f172a" strokeWidth={2} />
+          <circle
+            cx={x(latest.t)}
+            cy={y(latest.value)}
+            r={3.5}
+            fill="#34765f"
+            stroke="var(--canvas)"
+            strokeWidth={2}
+          />
 
-          {/* hover */}
           <rect
             x={PADDING.left}
             y={PADDING.top}
@@ -321,17 +310,20 @@ export function ForecastChart({
                 x2={x(hoverPoint.t)}
                 y1={PADDING.top}
                 y2={PADDING.top + plotH}
-                stroke="#94a3b8"
-                strokeWidth={1}
+                stroke="var(--muted)"
+                strokeWidth={0.8}
                 strokeDasharray="2 2"
               />
-              <circle cx={x(hoverPoint.t)} cy={y(hoverPoint.value)} r={3} fill="#e2e8f0" />
+              <circle cx={x(hoverPoint.t)} cy={y(hoverPoint.value)} r={3} fill="#34765f" />
               <text
-                x={Math.min(Math.max(x(hoverPoint.t), PADDING.left + 40), WIDTH - PADDING.right - 40)}
+                x={Math.min(
+                  Math.max(x(hoverPoint.t), PADDING.left + 40),
+                  WIDTH - PADDING.right - 40,
+                )}
                 y={PADDING.top + 10}
                 textAnchor="middle"
-                fontSize={10}
-                fill="#e2e8f0"
+                className="chart-label"
+                fill="var(--ink)"
               >
                 {new Date(hoverPoint.t).toLocaleDateString(undefined, {
                   month: "short",
@@ -342,50 +334,51 @@ export function ForecastChart({
             </g>
           )}
 
-          {/* x axis */}
           <line
             x1={PADDING.left}
             x2={WIDTH - PADDING.right}
             y1={PADDING.top + plotH}
             y2={PADDING.top + plotH}
-            stroke="#475569"
+            className="chart-axis"
           />
-          <text x={PADDING.left} y={HEIGHT - 10} fontSize={10} fill="#64748b">
+          <text x={PADDING.left} y={HEIGHT - 10} className="chart-label">
             {fmtDate(new Date(history[0].t).toISOString())}
           </text>
           <text
             x={WIDTH - PADDING.right}
             y={HEIGHT - 10}
             textAnchor="end"
-            fontSize={10}
-            fill="#64748b"
+            className="chart-label"
           >
             +{PROJECTION_DAYS}d projection
           </text>
         </svg>
       </div>
 
-      <div className="flex flex-wrap items-center gap-4 border-t border-brand-surface px-4 py-2 text-[11px] text-slate-400">
-        <span className="flex items-center gap-1.5">
-          <span className="h-0.5 w-4 bg-brand-accent" /> observed
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-brand-line-soft px-5 py-2.5">
+        <span className="mono flex items-center gap-1.5 text-[9px] uppercase tracking-wide text-brand-muted">
+          <span className="h-px w-4 bg-brand-accent" /> observed
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-0.5 w-4 border-t border-dashed border-violet-400" /> projected
+        <span className="mono flex items-center gap-1.5 text-[9px] uppercase tracking-wide text-brand-muted">
+          <span className="h-0 w-4 border-t border-dashed border-brand-ink" /> projected
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-2 w-4 rounded bg-brand-accent/20" /> 95% confidence
+        <span className="mono flex items-center gap-1.5 text-[9px] uppercase tracking-wide text-brand-muted">
+          <span className="h-2 w-4 bg-brand-accent/15" /> 95% confidence
         </span>
-        <span className="ml-auto tabular-nums">
-          lead time {leadTimeWeeks >= 999 ? "stable" : `${leadTimeWeeks.toFixed(1)}w`} · confidence{" "}
-          {fmtPct(confidenceScore * 100, 0)}
+        <span className="mono flex items-center gap-1.5 text-[9px] uppercase tracking-wide text-brand-muted">
+          <span className="h-0 w-4 border-t border-dashed border-brand-warn" /> safety margin
+        </span>
+        <span className="pending ml-auto tabular-nums">
+          lead time {leadTimeWeeks >= 999 ? "stable" : `${leadTimeWeeks.toFixed(1)}w`} ·
+          confidence {fmtPct(confidenceScore * 100, 0)}
         </span>
       </div>
 
       {regimeChangeDescription && (
-        <div className="border-t border-brand-warn/20 bg-brand-warn/5 px-4 py-2 text-[11px] text-brand-warn">
+        <div className="border-t border-brand-warn/30 bg-brand-warn/5 px-5 py-2.5 text-[10px] leading-relaxed text-brand-warn">
           Regime change detected — {regimeChangeDescription}
         </div>
       )}
-    </div>
+    </section>
   );
 }

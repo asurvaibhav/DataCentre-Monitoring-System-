@@ -1,10 +1,9 @@
-// Human-in-the-loop console: incident evidence, RCA, read-only remediation
-// options, risk assessment, operator decision, and the immutable audit trail.
+// Human-in-the-loop console: evidence, RCA, read-only remediation options,
+// risk assessment, operator decision, and the immutable audit trail.
 
 import { useEffect, useState } from "react";
 
 import { SeverityBadge } from "@/components/common/SeverityBadge";
-import { useAO02Store } from "@/store/ao02Store";
 import { useSelectedIncident } from "@/hooks/useSelectedIncident";
 import {
   fmtDate,
@@ -12,9 +11,12 @@ import {
   fmtPct,
   fmtWeeks,
   phaseLabel,
+  severityFromUtilization,
   truncateHash,
 } from "@/lib/format";
+import { useAO02Store } from "@/store/ao02Store";
 import { PHASE_ORDER } from "@/types/ao02";
+import type { SeverityStatus } from "@/types/ao02";
 
 interface HITLConsoleProps {
   onNavigate?: (page: "rack-map" | "queue" | "forecast" | "hitl") => void;
@@ -26,6 +28,18 @@ const DECISION_LABELS: Record<Decision, string> = {
   approve: "Approve advisory",
   reject: "Reject advisory",
   defer: "Defer decision",
+};
+
+const RISK_TEXT: Record<"ok" | "warn" | "critical", string> = {
+  ok: "text-brand-ok",
+  warn: "text-brand-warn",
+  critical: "text-brand-critical",
+};
+
+const RISK_BG: Record<"ok" | "warn" | "critical", string> = {
+  ok: "bg-brand-ok",
+  warn: "bg-brand-warn",
+  critical: "bg-brand-critical",
 };
 
 export function HITLConsole({ onNavigate }: HITLConsoleProps) {
@@ -43,168 +57,147 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
 
   if (!tokenId || !activeToken) {
     return (
-      <div className="rounded-xl border border-brand-surface bg-brand-surface/20 p-10 text-center">
-        <h2 className="text-sm font-semibold text-white">No incident selected</h2>
-        <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
-          Choose a token from the priority queue or run the pipeline to produce an
-          incident that reaches the human verification gate.
-        </p>
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => onNavigate?.("queue")}
-            className="rounded-lg border border-brand-surface bg-brand-surface/40 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-brand-surface/70"
-          >
-            Open queue
-          </button>
-          <button
-            type="button"
-            onClick={() => void actions.runPipeline()}
-            disabled={state.loading.pipeline || state.tokens.length === 0}
-            className="rounded-lg border border-brand-accent/40 bg-brand-accent/10 px-3 py-2 text-xs font-medium text-brand-accent hover:bg-brand-accent/20 disabled:opacity-40"
-          >
-            {state.loading.pipeline ? "Running…" : "Run top-priority incident"}
-          </button>
-        </div>
+      <div className="mt-8">
+        <section className="panel empty">
+          <p className="eyebrow">OPERATOR GATE</p>
+          <h2 className="mt-3 text-[25px] font-medium tracking-tight">No incident selected</h2>
+          <p className="mx-auto mt-3 max-w-md text-xs leading-relaxed text-brand-muted">
+            Choose a token from the priority queue or run the pipeline to produce an incident
+            that reaches the human verification gate.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <button type="button" onClick={() => onNavigate?.("queue")} className="btn">
+              Open queue
+            </button>
+            <button
+              type="button"
+              onClick={() => void actions.runPipeline()}
+              disabled={state.loading.pipeline || state.tokens.length === 0}
+              className="btn btn-primary"
+            >
+              {state.loading.pipeline ? "Running…" : "Run top-priority incident ↗"}
+            </button>
+          </div>
+        </section>
       </div>
     );
   }
 
   const phaseIndex = PHASE_ORDER.indexOf(activeToken.currentPhase);
   const currentIndex = phaseIndex === -1 ? PHASE_ORDER.length - 1 : phaseIndex;
+  const resolved = activeToken.currentPhase === "07_RESOLVED";
   const risk = envelope?.riskEvaluation ?? null;
   const rca = envelope?.rca ?? null;
   const options = envelope?.remediationOptions ?? [];
   const auditTrail = envelope?.auditTrail ?? [];
   const selectedOption = options.find((option) => option.optionId === risk?.selectedOptionId);
 
-  const riskTone =
-    !risk || risk.riskScore < 0.4
-      ? "ok"
-      : risk.riskScore < 0.7
-        ? "warn"
-        : "critical";
+  const riskTone: "ok" | "warn" | "critical" =
+    !risk || risk.riskScore < 0.4 ? "ok" : risk.riskScore < 0.7 ? "warn" : "critical";
+
+  const headerStatus: SeverityStatus = resolved
+    ? "HEALTHY"
+    : activeToken.currentPhase === "08_REJECTED_BY_OPERATOR"
+      ? "CRITICAL"
+      : isAwaiting
+        ? "WARNING"
+        : severityFromUtilization(activeToken.utilizationPct);
 
   return (
-    <div className="space-y-4">
-      {/* Incident header */}
-      <div className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
+    <div className="mt-8">
+      <section className="panel section-pad" aria-label="Incident record">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-mono text-sm font-semibold text-white">
-                {activeToken.tokenId}
-              </h2>
+            <p className="eyebrow">OPERATOR RECORD</p>
+            <h2 className="mono mt-2 text-[20px] font-medium tracking-tight">
+              {activeToken.tokenId}
+            </h2>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <SeverityBadge
-                status={
-                  activeToken.currentPhase === "07_RESOLVED"
-                    ? "HEALTHY"
-                    : activeToken.currentPhase === "08_REJECTED_BY_OPERATOR"
-                      ? "CRITICAL"
-                      : isAwaiting
-                        ? "WARNING"
-                        : "WARNING"
-                }
+                status={headerStatus}
                 label={phaseLabel(activeToken.currentPhase)}
               />
-              <span className="rounded-full border border-brand-surface px-2 py-0.5 text-[10px] text-slate-400">
-                Priority {activeToken.priorityNumber}
+              <span className="tag tag-neutral">priority {activeToken.priorityNumber}</span>
+              <span className="tag tag-neutral">
+                {activeToken.resourceType.replace(/_/g, " ").toLowerCase()}
               </span>
             </div>
-            <p className="mt-1.5 text-xs text-slate-400">
-              {activeToken.rackId} · tenant {activeToken.tenantId} ·{" "}
-              {activeToken.resourceType.replace(/_/g, " ")} ·{" "}
-              {activeToken.hopCount}/{activeToken.maxAllowedHops} hops · created{" "}
-              {fmtDateTime(activeToken.createdAt)}
+            <p className="pending mt-3">
+              {activeToken.rackId} · tenant {activeToken.tenantId} · {activeToken.hopCount}/
+              {activeToken.maxAllowedHops} hops · created {fmtDateTime(activeToken.createdAt)}
             </p>
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] text-slate-500">
-            <span className="rounded-full border border-brand-surface bg-brand-dark px-2 py-1">
-              operator view · facility scope
-            </span>
-            <button
-              type="button"
-              onClick={() => onNavigate?.("forecast")}
-              className="rounded-lg border border-brand-surface bg-brand-surface/40 px-2.5 py-1.5 font-medium text-slate-200 hover:bg-brand-surface/70"
-            >
-              View forecast
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="tag tag-neutral">operator view · facility scope</span>
+            <button type="button" onClick={() => onNavigate?.("forecast")} className="btn">
+              View forecast ↗
             </button>
           </div>
         </div>
+      </section>
 
-        {/* Phase stepper */}
-        <ol className="mt-4 flex flex-wrap items-center gap-1.5">
-          {PHASE_ORDER.map((phase, index) => {
-            const done = index < currentIndex || activeToken.currentPhase === "07_RESOLVED";
-            const current = index === currentIndex;
-            return (
-              <li key={phase} className="flex items-center gap-1.5">
-                <span
-                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium ${
-                    current
-                      ? "border-brand-accent/50 bg-brand-accent/10 text-brand-accent"
-                      : done
-                        ? "border-brand-ok/30 bg-brand-ok/10 text-brand-ok"
-                        : "border-brand-surface bg-brand-dark text-slate-500"
-                  }`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] ${
-                      current
-                        ? "bg-brand-accent text-brand-dark"
-                        : done
-                          ? "bg-brand-ok text-brand-dark"
-                          : "bg-slate-700 text-slate-300"
-                    }`}
-                  >
-                    {index + 1}
-                  </span>
-                  {phaseLabel(phase)}
-                </span>
-                {index < PHASE_ORDER.length - 1 && (
-                  <span className="text-[10px] text-slate-700">→</span>
-                )}
-              </li>
-            );
-          })}
-        </ol>
-      </div>
+      <ol className="phase-track mt-5" aria-label="Pipeline phases">
+        {PHASE_ORDER.map((phase, index) => {
+          const state =
+            resolved || index < currentIndex
+              ? "done"
+              : index === currentIndex
+                ? "current"
+                : "pending";
+          return (
+            <li key={phase} className="phase-step" data-state={state}>
+              <strong>{String(index + 1).padStart(2, "0")}</strong>
+              {phaseLabel(phase)}
+            </li>
+          );
+        })}
+      </ol>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
-        <div className="space-y-4">
-          {/* Telemetry evidence */}
-          <section className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-            <h3 className="text-sm font-semibold text-white">Telemetry evidence</h3>
-            <dl className="mt-3 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-3">
+      <div className="mt-6 grid gap-5 xl:grid-cols-[1fr_360px]">
+        <div className="space-y-5">
+          <section className="panel section-pad">
+            <div className="section-head">
               <div>
-                <dt className="text-slate-500">Current utilization</dt>
-                <dd className="mt-0.5 text-base font-semibold tabular-nums text-slate-100">
+                <p className="eyebrow">EVIDENCE / TELEMETRY</p>
+                <h3>Observed window</h3>
+              </div>
+              <span className="pending">raw_series_sha256</span>
+            </div>
+
+            <dl className="evidence-grid">
+              <div className="evidence-cell">
+                <dt className="evidence-label">Current utilization</dt>
+                <dd className="evidence-value tabular-nums">
                   {fmtPct(envelope?.telemetry.currentUtilizationPct ?? activeToken.utilizationPct)}
                 </dd>
               </div>
-              <div>
-                <dt className="text-slate-500">Safety margin</dt>
-                <dd className="mt-0.5 tabular-nums text-slate-200">
+              <div className="evidence-cell">
+                <dt className="evidence-label">Safety margin</dt>
+                <dd className="evidence-value tabular-nums">
                   {fmtPct(envelope?.telemetry.safetyMarginPct ?? activeToken.safetyMarginPct)}
                 </dd>
               </div>
-              <div>
-                <dt className="text-slate-500">Lead time</dt>
-                <dd className="mt-0.5 tabular-nums text-slate-200">
+              <div className="evidence-cell">
+                <dt className="evidence-label">Lead time</dt>
+                <dd className="evidence-value tabular-nums">
                   {fmtWeeks(envelope?.forecast.leadTimeWeeks ?? activeToken.leadTimeWeeks)}
                 </dd>
               </div>
-              <div>
-                <dt className="text-slate-500">Hard limit</dt>
-                <dd className="mt-0.5 tabular-nums text-slate-200">
-                  {(envelope?.telemetry.hardCapacityLimit ?? activeToken.hardCapacityLimit).toFixed(1)}{" "}
-                  {envelope?.telemetry.unit ?? activeToken.unit}
+              <div className="evidence-cell">
+                <dt className="evidence-label">Hard limit</dt>
+                <dd className="evidence-value tabular-nums">
+                  {(envelope?.telemetry.hardCapacityLimit ?? activeToken.hardCapacityLimit).toFixed(
+                    1,
+                  )}{" "}
+                  <span className="text-[10px] text-brand-muted">
+                    {envelope?.telemetry.unit ?? activeToken.unit}
+                  </span>
                 </dd>
               </div>
-              <div>
-                <dt className="text-slate-500">Forecast confidence</dt>
-                <dd className="mt-0.5 tabular-nums text-slate-200">
+              <div className="evidence-cell">
+                <dt className="evidence-label">Forecast confidence</dt>
+                <dd className="evidence-value tabular-nums">
                   {fmtPct(
                     (envelope?.forecast.forecastConfidenceScore ??
                       activeToken.forecastConfidenceScore) * 100,
@@ -212,9 +205,9 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                   )}
                 </dd>
               </div>
-              <div>
-                <dt className="text-slate-500">Predicted exhaustion</dt>
-                <dd className="mt-0.5 tabular-nums text-slate-200">
+              <div className="evidence-cell">
+                <dt className="evidence-label">Predicted exhaustion</dt>
+                <dd className="evidence-value tabular-nums">
                   {fmtDate(
                     envelope?.forecast.predictedExhaustionDate ??
                       activeToken.predictedExhaustionDate,
@@ -223,61 +216,56 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
               </div>
             </dl>
 
-            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-brand-surface/60 pt-3 text-[11px] text-slate-500">
-              <span>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-brand-line-soft pt-3">
+              <span className="pending">
                 Window {fmtDate(envelope?.telemetry.windowStart ?? activeToken.windowStart)} →{" "}
                 {fmtDate(envelope?.telemetry.windowEnd ?? activeToken.windowEnd)}
               </span>
-              <span className="font-mono text-[10px] text-slate-400">
-                sha256 {truncateHash(envelope?.telemetry.rawSeriesSha256 ?? activeToken.rawSeriesSha256)}
+              <span className="mono text-[9px] text-brand-muted">
+                sha256{" "}
+                {truncateHash(envelope?.telemetry.rawSeriesSha256 ?? activeToken.rawSeriesSha256)}
               </span>
               {activeToken.regimeChangeDetected && (
-                <span className="rounded bg-violet-400/10 px-1.5 py-0.5 text-violet-300">
-                  regime change
-                </span>
+                <span className="tag tag-neutral">regime change</span>
               )}
-              {activeToken.isTransientSpike && (
-                <span className="rounded bg-brand-warn/10 px-1.5 py-0.5 text-brand-warn">
-                  transient spike
-                </span>
-              )}
+              {activeToken.isTransientSpike && <span className="tag tag-warn">transient spike</span>}
             </div>
           </section>
 
-          {/* RCA */}
-          <section className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-white">Root cause analysis</h3>
+          <section className="panel section-pad">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">AGENT 02 / RCA</p>
+                <h3>Root cause analysis</h3>
+              </div>
               {rca && (
-                <span className="text-[11px] text-slate-500">
+                <span className="pending">
                   confidence {fmtPct(rca.confidenceScore * 100, 0)}
                 </span>
               )}
             </div>
+
             {!envelope ? (
-              <p className="mt-2 text-xs text-slate-500">Loading incident context…</p>
+              <p className="pending">Loading incident context…</p>
             ) : rca ? (
-              <div className="mt-3 space-y-2 text-xs">
-                <p className="text-slate-200">{rca.rootCauseSummary}</p>
-                <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-slate-500">Attributed tenant</dt>
-                    <dd className="text-slate-300">{rca.attributedTenantId}</dd>
+              <div>
+                <p className="text-xs leading-relaxed">{rca.rootCauseSummary}</p>
+                <dl className="mt-4 text-xs">
+                  <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                    <dt className="text-brand-muted">Attributed tenant</dt>
+                    <dd className="mono">{rca.attributedTenantId}</dd>
                   </div>
-                  <div>
-                    <dt className="text-slate-500">Workload signature</dt>
-                    <dd className="text-slate-300">{rca.drivingWorkloadSignature}</dd>
+                  <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                    <dt className="text-brand-muted">Workload signature</dt>
+                    <dd className="mono text-right">{rca.drivingWorkloadSignature}</dd>
                   </div>
                 </dl>
                 {rca.correlatedSignals.length > 0 && (
-                  <div>
-                    <p className="text-slate-500">Correlated signals</p>
-                    <div className="mt-1 flex flex-wrap gap-1">
+                  <div className="mt-3">
+                    <p className="pending">Correlated signals</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
                       {rca.correlatedSignals.map((signal) => (
-                        <span
-                          key={signal}
-                          className="rounded bg-brand-surface px-1.5 py-0.5 text-[10px] text-slate-300"
-                        >
+                        <span key={signal} className="tag tag-neutral">
                           {signal}
                         </span>
                       ))}
@@ -285,66 +273,59 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                   </div>
                 )}
                 {rca.investigationNotes && (
-                  <p className="text-slate-500">{rca.investigationNotes}</p>
+                  <p className="mt-3 text-[11px] leading-relaxed text-brand-muted">
+                    {rca.investigationNotes}
+                  </p>
                 )}
               </div>
             ) : (
-              <p className="mt-2 text-xs text-slate-500">
-                RCA has not run yet. Start the pipeline from the queue.
-              </p>
+              <p className="pending">RCA has not run yet. Start the pipeline from the queue.</p>
             )}
           </section>
 
-          {/* Remediation options */}
-          <section className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-            <h3 className="text-sm font-semibold text-white">
-              Remediation options{" "}
-              <span className="text-[11px] font-normal text-slate-500">
-                (simulated — read-only telemetry)
-              </span>
-            </h3>
+          <section className="panel section-pad">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">AGENT 03 / REMEDIATION</p>
+                <h3>Simulated options</h3>
+              </div>
+              <span className="pending">read-only telemetry</span>
+            </div>
+
             {options.length === 0 ? (
-              <p className="mt-2 text-xs text-slate-500">
-                No remediation options generated yet.
-              </p>
+              <p className="pending">No remediation options generated yet.</p>
             ) : (
-              <ul className="mt-3 space-y-2">
+              <ul>
                 {options.map((option) => {
                   const selected = option.optionId === risk?.selectedOptionId;
                   return (
                     <li
                       key={option.optionId}
-                      className={`rounded-lg border p-3 text-xs ${
+                      className={`border-b border-brand-line-soft py-3 last:border-b-0 ${
                         selected
-                          ? "border-brand-accent/40 bg-brand-accent/5"
-                          : "border-brand-surface bg-brand-dark/40"
+                          ? "-mx-3 border-l-2 border-l-brand-accent bg-brand-accent/5 px-3"
+                          : ""
                       }`}
                     >
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-slate-200">{option.title}</span>
-                        {selected && (
-                          <span className="rounded-full bg-brand-accent/15 px-2 py-0.5 text-[10px] font-medium text-brand-accent">
-                            recommended
-                          </span>
-                        )}
+                        <span className="text-xs font-medium">{option.title}</span>
+                        {selected && <span className="tag tag-ok">recommended</span>}
                         {option.mutatesLiveFacilityControls ? (
-                          <span className="rounded-full bg-brand-critical/10 px-2 py-0.5 text-[10px] text-brand-critical">
-                            mutates controls
-                          </span>
+                          <span className="tag tag-critical">mutates controls</span>
                         ) : (
-                          <span className="rounded-full bg-brand-ok/10 px-2 py-0.5 text-[10px] text-brand-ok">
-                            read-only
-                          </span>
+                          <span className="tag tag-neutral">read-only</span>
                         )}
                       </div>
-                      <p className="mt-1 text-slate-400">{option.recommendedAction}</p>
-                      <p className="mt-1.5 text-[11px] text-slate-500">
+                      <p className="mt-1 text-[11px] leading-relaxed text-brand-muted">
+                        {option.recommendedAction}
+                      </p>
+                      <p className="pending mt-1.5">
                         Simulated post-action utilization{" "}
-                        <span className="tabular-nums text-slate-300">
+                        <span className="text-brand-ink tabular-nums">
                           {fmtPct(option.simulatedPostActionUtilizationPct)}
                         </span>{" "}
                         · extends runway{" "}
-                        <span className="tabular-nums text-slate-300">
+                        <span className="text-brand-ink tabular-nums">
                           {fmtWeeks(option.projectedLeadTimeExtensionWeeks)}
                         </span>
                       </p>
@@ -355,36 +336,36 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
             )}
           </section>
 
-          {/* Audit trail */}
-          <section className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-            <h3 className="text-sm font-semibold text-white">
-              Immutable audit trail{" "}
-              <span className="text-[11px] font-normal text-slate-500">
-                ({auditTrail.length} entries)
-              </span>
-            </h3>
+          <section className="panel section-pad">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">AUDIT / IMMUTABLE</p>
+                <h3>Decision trail</h3>
+              </div>
+              <span className="pending">{auditTrail.length} entries</span>
+            </div>
+
             {auditTrail.length === 0 ? (
-              <p className="mt-2 text-xs text-slate-500">No audit entries yet.</p>
+              <p className="pending">No audit entries yet.</p>
             ) : (
-              <ol className="mt-3 space-y-3">
+              <ol className="timeline">
                 {auditTrail.map((entry) => (
-                  <li key={entry.auditId} className="flex gap-3 text-xs">
-                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-accent" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-baseline gap-2">
-                        <span className="font-medium text-slate-200">{entry.actor}</span>
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">
-                          {phaseLabel(entry.phase)}
-                        </span>
-                        <span className="ml-auto text-[10px] tabular-nums text-slate-500">
-                          {fmtDateTime(entry.timestamp)}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-slate-400">{entry.decisionSummary}</p>
-                      <p className="mt-0.5 font-mono text-[10px] text-slate-600">
-                        telemetry {truncateHash(entry.telemetryHash, 8, 4)}
-                      </p>
+                  <li key={entry.auditId} className="text-xs">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="font-medium">{entry.actor}</span>
+                      <span className="mono text-[9px] uppercase tracking-wide text-brand-muted">
+                        {phaseLabel(entry.phase)}
+                      </span>
+                      <span className="mono ml-auto text-[9px] tabular-nums text-brand-muted">
+                        {fmtDateTime(entry.timestamp)}
+                      </span>
                     </div>
+                    <p className="mt-1 text-[11px] leading-relaxed text-brand-muted">
+                      {entry.decisionSummary}
+                    </p>
+                    <p className="mono mt-1 text-[9px] text-brand-muted">
+                      telemetry {truncateHash(entry.telemetryHash, 8, 4)}
+                    </p>
                   </li>
                 ))}
               </ol>
@@ -392,80 +373,82 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
           </section>
         </div>
 
-        {/* Decision panel */}
-        <aside className="space-y-4">
-          <section className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-            <h3 className="text-sm font-semibold text-white">Risk gate</h3>
+        <aside className="space-y-5">
+          <section className="panel section-pad">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">RISK GATE</p>
+                <h3>Assessment</h3>
+              </div>
+            </div>
+
             {risk ? (
-              <div className="mt-3 space-y-3 text-xs">
-                <div>
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-slate-500">Risk score</span>
-                    <span
-                      className={`text-2xl font-semibold tabular-nums ${
-                        riskTone === "critical"
-                          ? "text-brand-critical"
-                          : riskTone === "warn"
-                            ? "text-brand-warn"
-                            : "text-brand-ok"
-                      }`}
-                    >
-                      {risk.riskScore.toFixed(2)}
-                    </span>
+              <div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="pending">Risk score</span>
+                  <span
+                    className={`text-[30px] font-medium leading-none tracking-tight tabular-nums ${RISK_TEXT[riskTone]}`}
+                  >
+                    {risk.riskScore.toFixed(2)}
+                  </span>
+                </div>
+                <div className="mt-2 h-[2px] w-full bg-brand-line-soft">
+                  <div
+                    className={`h-[2px] ${RISK_BG[riskTone]}`}
+                    style={{ width: `${Math.min(100, risk.riskScore * 100)}%` }}
+                  />
+                </div>
+
+                <dl className="mt-4 text-xs">
+                  <div className="border-b border-brand-line-soft/60 py-2">
+                    <dt className="pending">Gate decision</dt>
+                    <dd className="mt-1 text-[11px]">
+                      {risk.gateDecision.replace(/_/g, " ").toLowerCase()}
+                    </dd>
                   </div>
-                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-700">
-                    <div
-                      className={`h-full rounded-full ${
-                        riskTone === "critical"
-                          ? "bg-brand-critical"
-                          : riskTone === "warn"
-                            ? "bg-brand-warn"
-                            : "bg-brand-ok"
-                      }`}
-                      style={{ width: `${Math.min(100, risk.riskScore * 100)}%` }}
-                    />
+                  <div className="border-b border-brand-line-soft/60 py-2">
+                    <dt className="pending">Blast radius</dt>
+                    <dd className="mt-1 text-[11px] leading-relaxed text-brand-muted">
+                      {risk.blastRadiusSummary}
+                    </dd>
                   </div>
-                </div>
-                <div>
-                  <p className="text-slate-500">Gate decision</p>
-                  <p className="mt-0.5 font-medium text-slate-200">
-                    {risk.gateDecision.replace(/_/g, " ").toLowerCase()}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Blast radius</p>
-                  <p className="mt-0.5 text-slate-300">{risk.blastRadiusSummary}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500">SLA impact</p>
-                  <p className="mt-0.5 text-slate-300">{risk.slaImpactAssessment}</p>
-                </div>
+                  <div className="py-2">
+                    <dt className="pending">SLA impact</dt>
+                    <dd className="mt-1 text-[11px] leading-relaxed text-brand-muted">
+                      {risk.slaImpactAssessment}
+                    </dd>
+                  </div>
+                </dl>
+
                 {selectedOption && (
-                  <div className="rounded-lg border border-brand-accent/30 bg-brand-accent/5 p-2">
-                    <p className="text-[10px] uppercase tracking-wide text-brand-accent">
+                  <div className="mt-2 border border-brand-accent/30 bg-brand-accent/5 p-2.5">
+                    <p className="mono text-[8px] uppercase tracking-wide text-brand-accent">
                       Recommended action
                     </p>
-                    <p className="mt-0.5 text-slate-200">{selectedOption.title}</p>
+                    <p className="mt-1 text-[11px]">{selectedOption.title}</p>
                   </div>
                 )}
               </div>
             ) : (
-              <p className="mt-2 text-xs text-slate-500">
-                Risk evaluation has not run for this incident.
-              </p>
+              <p className="pending">Risk evaluation has not run for this incident.</p>
             )}
           </section>
 
-          <section className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-            <h3 className="text-sm font-semibold text-white">Operator decision</h3>
+          <section className="panel section-pad">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">OPERATOR DECISION</p>
+                <h3>Sign-off</h3>
+              </div>
+            </div>
 
             {humanApproved !== null && !isAwaiting ? (
-              <div className="mt-3 space-y-2 text-xs">
+              <div className="space-y-3 text-xs">
                 <p
-                  className={`rounded-lg border px-3 py-2 ${
+                  className={`border px-3 py-2 text-[11px] leading-relaxed ${
                     humanApproved
-                      ? "border-brand-ok/30 bg-brand-ok/10 text-brand-ok"
-                      : "border-brand-critical/30 bg-brand-critical/10 text-brand-critical"
+                      ? "border-brand-accent/40 bg-brand-accent/5 text-brand-accent"
+                      : "border-brand-critical/40 bg-brand-critical/5 text-brand-critical"
                   }`}
                 >
                   {humanApproved
@@ -473,32 +456,34 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                     : "Advisory rejected by operator."}
                 </p>
                 {envelope?.operatorNotes && (
-                  <p className="text-slate-400">{envelope.operatorNotes}</p>
+                  <p className="text-[11px] leading-relaxed text-brand-muted">
+                    {envelope.operatorNotes}
+                  </p>
                 )}
                 <button
                   type="button"
                   onClick={() => onNavigate?.("queue")}
-                  className="w-full rounded-lg border border-brand-surface bg-brand-surface/40 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-brand-surface/70"
+                  className="btn btn-block"
                 >
                   Back to queue
                 </button>
               </div>
             ) : isAwaiting ? (
-              <div className="mt-3 space-y-3 text-xs">
-                <p className="rounded-lg border border-brand-warn/30 bg-brand-warn/10 px-3 py-2 text-brand-warn">
-                  Pipeline paused before the human verification gate. Review the
-                  evidence, then record a decision.
+              <div className="space-y-3 text-xs">
+                <p className="notice">
+                  Pipeline paused before the human verification gate. Review the evidence,
+                  then record a decision.
                 </p>
 
-                <label className="block">
-                  <span className="text-slate-500">Operator notes (optional)</span>
+                <label className="field-label">
+                  Operator notes (optional)
                   <textarea
                     value={notes}
                     onChange={(event) => setNotes(event.target.value)}
                     rows={3}
                     maxLength={1000}
                     placeholder="Context for the audit trail…"
-                    className="mt-1 w-full resize-none rounded-lg border border-brand-surface bg-brand-dark px-2.5 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-brand-accent focus:outline-none"
+                    className="field resize-none"
                   />
                 </label>
 
@@ -509,12 +494,12 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                       type="button"
                       disabled={deciding}
                       onClick={() => void decide(decision, notes)}
-                      className={`w-full rounded-lg border px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      className={`btn btn-block ${
                         decision === "approve"
-                          ? "border-brand-ok/40 bg-brand-ok/10 text-brand-ok hover:bg-brand-ok/20"
+                          ? "btn-approve"
                           : decision === "reject"
-                            ? "border-brand-critical/40 bg-brand-critical/10 text-brand-critical hover:bg-brand-critical/20"
-                            : "border-brand-surface bg-brand-surface/40 text-slate-300 hover:bg-brand-surface/70"
+                            ? "btn-danger"
+                            : ""
                       }`}
                     >
                       {deciding ? "Recording…" : DECISION_LABELS[decision]}
@@ -523,23 +508,21 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                 </div>
               </div>
             ) : (
-              <div className="mt-3 space-y-2 text-xs">
-                <p className="text-slate-400">
+              <div className="space-y-3 text-xs">
+                <p className="text-[11px] leading-relaxed text-brand-muted">
                   This incident is in phase{" "}
-                  <span className="text-slate-200">
+                  <span className="text-brand-ink">
                     {phaseLabel(activeToken.currentPhase)}
                   </span>{" "}
                   and is not awaiting a decision.
                 </p>
                 {activeToken.currentPhase === "01_RESOURCE_MONITORING" && (
-                  <p className="text-slate-500">
-                    Start the pipeline from the queue to progress it to the gate.
-                  </p>
+                  <p className="pending">Start the pipeline from the queue to reach the gate.</p>
                 )}
                 <button
                   type="button"
                   onClick={() => onNavigate?.("queue")}
-                  className="w-full rounded-lg border border-brand-surface bg-brand-surface/40 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-brand-surface/70"
+                  className="btn btn-block"
                 >
                   Open queue
                 </button>
@@ -547,12 +530,12 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
             )}
           </section>
 
-          <section className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4 text-[11px] leading-relaxed text-slate-500">
-            <p className="font-medium text-slate-400">Safety constraints</p>
-            <p className="mt-1">
-              AO-02 never writes to facility controls. Remediation is simulated and
-              advisory only; every decision is appended to the token&apos;s immutable
-              audit trail with the originating telemetry hash.
+          <section className="panel section-pad">
+            <p className="eyebrow">SAFETY CONSTRAINTS</p>
+            <p className="mt-3 text-[10px] leading-relaxed text-brand-muted">
+              AO-02 never writes to facility controls. Remediation is simulated and advisory
+              only; every decision is appended to the token&apos;s immutable audit trail with
+              the originating telemetry hash.
             </p>
           </section>
         </aside>

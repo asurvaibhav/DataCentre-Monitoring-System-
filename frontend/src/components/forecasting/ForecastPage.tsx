@@ -4,9 +4,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { MetricCard } from "@/components/common/MetricCard";
+import { SeverityBadge } from "@/components/common/SeverityBadge";
 import { useTelemetry } from "@/hooks/useTelemetry";
 import { useAO02Store } from "@/store/ao02Store";
-import { fmtDate, fmtPct, fmtWeeks } from "@/lib/format";
+import { fmtDate, fmtPct, fmtWeeks, phaseLabel } from "@/lib/format";
 import {
   CRAC_UNITS,
   RACK_IDS,
@@ -14,7 +15,12 @@ import {
   resourcesForNode,
   tenantsForResource,
 } from "@/lib/resourceSpec";
-import type { IncidentTokenDTO, ResourceType, TelemetryWindow } from "@/types/ao02";
+import type {
+  IncidentTokenDTO,
+  ResourceType,
+  SeverityStatus,
+  TelemetryWindow,
+} from "@/types/ao02";
 import { ForecastChart } from "./ForecastChart";
 
 interface ForecastPageProps {
@@ -68,6 +74,17 @@ function findSeriesToken(
         token.resourceType === resourceType,
     ) ?? null
   );
+}
+
+function tokenTagStatus(token: IncidentTokenDTO): SeverityStatus {
+  if (token.currentPhase === "07_RESOLVED") return "HEALTHY";
+  if (token.currentPhase === "08_REJECTED_BY_OPERATOR") return "CRITICAL";
+  if (token.awaitingHumanVerification) return "WARNING";
+  return token.utilizationPct >= 95
+    ? "CRITICAL"
+    : token.utilizationPct >= 85
+      ? "WARNING"
+      : "HEALTHY";
 }
 
 export function ForecastPage({ onNavigate }: ForecastPageProps) {
@@ -140,15 +157,15 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
   }, [rackId, tenantId, resourceType, loadTelemetry]);
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="flex flex-col gap-1 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+    <div className="mt-8">
+      <section className="panel section-pad" aria-label="Series selector">
+        <div className="flex flex-wrap items-end gap-x-5 gap-y-4">
+          <label className="field-label">
             Rack / Cooling unit
             <select
               value={rackId}
               onChange={(event) => handleNodeChange(event.target.value)}
-              className="min-w-[170px] rounded-lg border border-brand-surface bg-brand-dark px-3 py-2 text-sm text-slate-200 focus:border-brand-accent focus:outline-none"
+              className="field min-w-[170px]"
             >
               {NODE_OPTIONS.map((node) => (
                 <option key={node.id} value={node.id}>
@@ -158,12 +175,12 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
             </select>
           </label>
 
-          <label className="flex flex-col gap-1 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+          <label className="field-label">
             Resource
             <select
               value={resourceType}
               onChange={(event) => handleResourceChange(event.target.value as ResourceType)}
-              className="min-w-[170px] rounded-lg border border-brand-surface bg-brand-dark px-3 py-2 text-sm text-slate-200 focus:border-brand-accent focus:outline-none"
+              className="field min-w-[170px]"
             >
               {availableResources.map((resource) => (
                 <option key={resource} value={resource}>
@@ -173,12 +190,12 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
             </select>
           </label>
 
-          <label className="flex flex-col gap-1 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+          <label className="field-label">
             Tenant
             <select
               value={tenantId}
               onChange={(event) => setTenantId(event.target.value)}
-              className="min-w-[140px] rounded-lg border border-brand-surface bg-brand-dark px-3 py-2 text-sm text-slate-200 focus:border-brand-accent focus:outline-none"
+              className="field min-w-[140px]"
             >
               {availableTenants.map((tenant) => (
                 <option key={tenant} value={tenant}>
@@ -188,34 +205,31 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
             </select>
           </label>
 
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={loading}
-              className="rounded-lg border border-brand-surface bg-brand-surface/40 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-brand-surface/70 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? "Loading…" : "Load window"}
-            </button>
-            <div className="text-[11px] leading-tight text-slate-500">
-              <p>
-                Hard limit{" "}
-                <span className="font-medium tabular-nums text-slate-300">
-                  {spec.hardLimit.toFixed(1)} {spec.unit}
-                </span>
-              </p>
-              <p>
-                Margin{" "}
-                <span className="font-medium tabular-nums text-slate-300">
-                  {fmtPct(spec.safetyMarginPct, 0)}
-                </span>
-              </p>
-            </div>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={loading}
+            className="btn"
+          >
+            {loading ? "Loading…" : "Load window ↗"}
+          </button>
+
+          <div className="mono ml-auto space-y-1 text-[9px] uppercase tracking-wide text-brand-muted">
+            <p>
+              Hard limit{" "}
+              <span className="text-brand-ink">
+                {spec.hardLimit.toFixed(1)} {spec.unit}
+              </span>
+            </p>
+            <p>
+              Safety margin{" "}
+              <span className="text-brand-ink">{fmtPct(spec.safetyMarginPct, 0)}</span>
+            </p>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="stat-strip mt-7">
         <MetricCard
           title="Current utilization"
           value={latest === null ? "—" : `${latest.toFixed(1)} ${spec.unit}`}
@@ -232,7 +246,13 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
         />
         <MetricCard
           title="Time to exhaustion"
-          value={leadTimeIsEstimate ? (leadTimeWeeks ? `~${fmtWeeks(leadTimeWeeks)}` : "stable") : fmtWeeks(leadTimeWeeks)}
+          value={
+            leadTimeIsEstimate
+              ? leadTimeWeeks
+                ? `~${fmtWeeks(leadTimeWeeks)}`
+                : "stable"
+              : fmtWeeks(leadTimeWeeks)
+          }
           subtext={leadTimeIsEstimate ? "Linear estimate from window" : "Agent forecast"}
           tone={
             leadTimeWeeks > 0 && leadTimeWeeks < 2
@@ -244,9 +264,7 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
         />
         <MetricCard
           title="Forecast confidence"
-          value={
-            seriesToken ? fmtPct(seriesToken.forecastConfidenceScore * 100, 0) : "—"
-          }
+          value={seriesToken ? fmtPct(seriesToken.forecastConfidenceScore * 100, 0) : "—"}
           subtext={
             seriesToken?.confidenceIntervalDays
               ? `±${Math.round(
@@ -272,96 +290,135 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
         />
       </div>
 
-      <ForecastChart
-        window={activeWindow}
-        loading={loading}
-        error={error && !activeWindow ? error : null}
-        safetyMarginPct={seriesToken?.safetyMarginPct ?? spec.safetyMarginPct}
-        hardCapacityLimit={seriesToken?.hardCapacityLimit ?? spec.hardLimit}
-        unit={seriesToken?.unit ?? spec.unit}
-        leadTimeWeeks={leadTimeWeeks}
-        confidenceScore={seriesToken?.forecastConfidenceScore ?? 0}
-        regimeChangeDescription={seriesToken?.regimeChangeDescription ?? null}
-        onRetry={refresh}
-      />
+      <div className="mt-7">
+        <ForecastChart
+          window={activeWindow}
+          loading={loading}
+          error={error && !activeWindow ? error : null}
+          safetyMarginPct={seriesToken?.safetyMarginPct ?? spec.safetyMarginPct}
+          hardCapacityLimit={seriesToken?.hardCapacityLimit ?? spec.hardLimit}
+          unit={seriesToken?.unit ?? spec.unit}
+          leadTimeWeeks={leadTimeWeeks}
+          confidenceScore={seriesToken?.forecastConfidenceScore ?? 0}
+          regimeChangeDescription={seriesToken?.regimeChangeDescription ?? null}
+          onRetry={refresh}
+        />
+      </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-          <h2 className="text-sm font-semibold text-white">Linked incident</h2>
-          {seriesToken ? (
-            <div className="mt-3 space-y-2 text-xs text-slate-400">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-mono text-slate-200">{seriesToken.tokenId}</span>
-                <span className="rounded-full bg-brand-surface px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
-                  {seriesToken.currentPhase.replace(/^\d\d_/, "").replace(/_/g, " ")}
-                </span>
-              </div>
-              <p>
-                Priority {seriesToken.priorityNumber} · {seriesToken.hopCount}/
-                {seriesToken.maxAllowedHops} hops · tenant {seriesToken.tenantId}
-              </p>
-              <p>
-                Observed{" "}
-                <span className="tabular-nums text-slate-200">
-                  {fmtPct(seriesToken.utilizationPct)}
-                </span>{" "}
-                of hard limit · lead time{" "}
-                <span className="tabular-nums text-slate-200">
-                  {fmtWeeks(seriesToken.leadTimeWeeks)}
-                </span>
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  actions.selectToken(seriesToken.tokenId);
-                  onNavigate?.("hitl");
-                }}
-                className="mt-1 rounded-lg border border-brand-accent/40 bg-brand-accent/10 px-3 py-1.5 text-xs font-medium text-brand-accent hover:bg-brand-accent/20"
-              >
-                Open in HITL console →
-              </button>
+      <div className="mt-7 grid gap-5 lg:grid-cols-2">
+        <section className="panel section-pad">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">LINKED INCIDENT</p>
+              <h2 className="mono text-[13px] font-normal">
+                {seriesToken ? seriesToken.tokenId : "No token attached"}
+              </h2>
             </div>
-          ) : (
-            <p className="mt-2 text-xs text-slate-500">
-              No incident token for this series. The projection above is a linear
-              estimate from the telemetry window.
-            </p>
-          )}
-        </div>
+            {seriesToken && (
+              <SeverityBadge
+                status={tokenTagStatus(seriesToken)}
+                label={phaseLabel(seriesToken.currentPhase)}
+              />
+            )}
+          </div>
 
-        <div className="rounded-xl border border-brand-surface bg-brand-surface/20 p-4">
-          <h2 className="text-sm font-semibold text-white">Window evidence</h2>
-          {activeWindow ? (
-            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-              <dt className="text-slate-500">Window start</dt>
-              <dd className="tabular-nums text-slate-300">
-                {fmtDate(activeWindow.windowStart)}
-              </dd>
-              <dt className="text-slate-500">Window end</dt>
-              <dd className="tabular-nums text-slate-300">{fmtDate(activeWindow.windowEnd)}</dd>
-              <dt className="text-slate-500">Unit</dt>
-              <dd className="text-slate-300">{spec.unit}</dd>
-              {seriesToken?.rawSeriesSha256 && (
-                <>
-                  <dt className="text-slate-500">Series hash</dt>
-                  <dd className="truncate font-mono text-[10px] text-slate-400">
-                    {seriesToken.rawSeriesSha256.slice(0, 24)}…
-                  </dd>
-                </>
-              )}
-              {seriesToken?.regimeChangeDetected && (
-                <>
-                  <dt className="text-brand-warn">Regime change</dt>
-                  <dd className="text-brand-warn">
-                    {seriesToken.regimeChangeDescription ?? "detected"}
-                  </dd>
-                </>
-              )}
+          {seriesToken ? (
+            <dl className="text-xs">
+              <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                <dt className="text-brand-muted">Priority / hops</dt>
+                <dd className="mono tabular-nums">
+                  {seriesToken.priorityNumber} · {seriesToken.hopCount}/
+                  {seriesToken.maxAllowedHops}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                <dt className="text-brand-muted">Tenant</dt>
+                <dd className="mono">{seriesToken.tenantId}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                <dt className="text-brand-muted">Observed utilization</dt>
+                <dd className="mono tabular-nums">{fmtPct(seriesToken.utilizationPct)}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                <dt className="text-brand-muted">Agent lead time</dt>
+                <dd className="mono tabular-nums">{fmtWeeks(seriesToken.leadTimeWeeks)}</dd>
+              </div>
+              <div className="flex justify-between gap-4 py-2">
+                <dt className="text-brand-muted">Projected exhaustion</dt>
+                <dd className="mono tabular-nums">
+                  {fmtDate(seriesToken.predictedExhaustionDate)}
+                </dd>
+              </div>
             </dl>
           ) : (
-            <p className="mt-2 text-xs text-slate-500">Load a window to inspect evidence.</p>
+            <p className="text-xs leading-relaxed text-brand-muted">
+              No incident token for this series. The projection above is a linear estimate
+              from the telemetry window.
+            </p>
           )}
-        </div>
+
+          {seriesToken && (
+            <button
+              type="button"
+              className="btn btn-primary mt-4"
+              onClick={() => {
+                actions.selectToken(seriesToken.tokenId);
+                onNavigate?.("hitl");
+              }}
+            >
+              Open in HITL console ↗
+            </button>
+          )}
+        </section>
+
+        <section className="panel section-pad">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">WINDOW EVIDENCE</p>
+              <h2>Telemetry window</h2>
+            </div>
+            {activeWindow && <span className="pending">{activeWindow.count} points</span>}
+          </div>
+
+          {activeWindow ? (
+            <dl className="text-xs">
+              <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                <dt className="text-brand-muted">Window start</dt>
+                <dd className="mono tabular-nums">{fmtDate(activeWindow.windowStart)}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                <dt className="text-brand-muted">Window end</dt>
+                <dd className="mono tabular-nums">{fmtDate(activeWindow.windowEnd)}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                <dt className="text-brand-muted">Unit</dt>
+                <dd className="mono">{spec.unit}</dd>
+              </div>
+              {seriesToken?.rawSeriesSha256 && (
+                <div className="flex justify-between gap-4 border-b border-brand-line-soft/60 py-2">
+                  <dt className="text-brand-muted">Series hash</dt>
+                  <dd className="mono truncate text-[10px] text-brand-muted">
+                    {seriesToken.rawSeriesSha256.slice(0, 24)}…
+                  </dd>
+                </div>
+              )}
+              <div className="flex justify-between gap-4 py-2">
+                <dt className="text-brand-muted">Lineage</dt>
+                <dd className="mono text-[10px]">raw_series_sha256</dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-xs leading-relaxed text-brand-muted">
+              Load a window to inspect its evidence.
+            </p>
+          )}
+
+          {seriesToken?.regimeChangeDetected && (
+            <p className="notice mt-4">
+              Regime change — {seriesToken.regimeChangeDescription ?? "detected"}
+            </p>
+          )}
+        </section>
       </div>
     </div>
   );

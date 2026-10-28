@@ -1,62 +1,91 @@
-// Top bar: mobile menu, live stream status, queue counts.
+// Global shell header: brand, console mode and the four technical views.
+
+export type ViewKey = "rack-map" | "queue" | "forecast" | "hitl";
 
 interface HeaderProps {
+  active: ViewKey;
   connected: boolean;
   queuedCount: number;
   pendingCount: number;
   running: boolean;
-  onMenuClick: () => void;
+  lastUpdated: string | null;
+  onNavigate: (page: ViewKey) => void;
 }
 
+const NAV_ITEMS: Array<{ key: ViewKey; number: string; label: string }> = [
+  { key: "rack-map", number: "01", label: "Facility" },
+  { key: "queue", number: "02", label: "Queue" },
+  { key: "forecast", number: "03", label: "Forecast" },
+  { key: "hitl", number: "04", label: "Operator" },
+];
+
 export function Header({
+  active,
   connected,
   queuedCount,
   pendingCount,
   running,
-  onMenuClick,
+  lastUpdated,
+  onNavigate,
 }: HeaderProps) {
+  const updatedLabel = lastUpdated
+    ? new Date(lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "—";
+
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-brand-surface bg-brand-dark/95 px-4 backdrop-blur lg:ml-64 lg:px-6">
-      <button
-        type="button"
-        onClick={onMenuClick}
-        className="rounded-lg p-2 text-slate-400 hover:bg-brand-surface/50 hover:text-white lg:hidden"
-        aria-label="Open navigation"
-      >
-        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-          <path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
+    <>
+      <header className="site-header">
+        <a href="#main" className="brand" aria-label="AO-02 Capacity Observatory">
+          <span className="brand-mark">A</span>
+          AO-02
+          <span className="brand-caption">CAPACITY OBSERVATORY</span>
+        </a>
+        <span className="mode-label">
+          AO–02 <span aria-hidden="true">/</span> OPERATIONS CONSOLE
+        </span>
+      </header>
 
-      <div className="hidden text-xs text-slate-500 sm:block">
-        Proactive capacity exhaustion forecasting · multi-tenant
-      </div>
+      <nav className="top-nav" aria-label="Views">
+        <div className="nav-items">
+          {NAV_ITEMS.map((item) => {
+            const count =
+              item.key === "queue"
+                ? queuedCount
+                : item.key === "hitl"
+                  ? pendingCount
+                  : null;
 
-      <div className="ml-auto flex items-center gap-2">
-        {running && (
-          <span className="flex items-center gap-1.5 rounded-full border border-brand-accent/30 bg-brand-accent/10 px-3 py-1 text-[11px] font-medium text-brand-accent">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-accent" />
-            Agents running
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className="nav-item"
+                data-active={active === item.key}
+                aria-current={active === item.key ? "page" : undefined}
+                onClick={() => onNavigate(item.key)}
+              >
+                <strong>{item.number}</strong>
+                {item.label}
+                {count !== null && (
+                  <span className="nav-count" aria-label={`${count} items`}>
+                    {String(count).padStart(2, "0")}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="nav-status" role="status">
+          {running && <span className="tag tag-ok">agents running</span>}
+          <span className={`connection-dot ${connected ? "connected" : ""}`} />
+          {connected ? "API connected" : "Polling API"}
+          <span className="sep" aria-hidden="true">
+            /
           </span>
-        )}
-
-        <span className="flex items-center gap-1.5 rounded-full border border-brand-surface bg-brand-surface/40 px-3 py-1 text-[11px] font-medium text-slate-300">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              connected ? "bg-brand-ok" : "bg-brand-warn"
-            }`}
-          />
-          {connected ? "Live" : "Polling"}
-        </span>
-
-        <span className="hidden items-center gap-1.5 rounded-full border border-brand-surface bg-brand-surface/40 px-3 py-1 text-[11px] font-medium text-slate-300 sm:flex">
-          Queue <span className="font-semibold tabular-nums text-white">{queuedCount}</span>
-        </span>
-
-        <span className="flex items-center gap-1.5 rounded-full border border-brand-warn/30 bg-brand-warn/10 px-3 py-1 text-[11px] font-medium text-brand-warn">
-          HITL <span className="font-semibold tabular-nums">{pendingCount}</span>
-        </span>
-      </div>
-    </header>
+          <span className="nav-time">updated {updatedLabel}</span>
+        </div>
+      </nav>
+    </>
   );
 }
