@@ -146,7 +146,7 @@ class IngestionService:
         safety_margin_pct = float(spec["safety_margin_pct"])
         unit = str(spec["unit"])
 
-        points = self._get_latest_window(rack_id, tenant_id, resource_type, lookback_hours)
+        points = self.get_latest_window(rack_id, tenant_id, resource_type, lookback_hours)
         if len(points) < 10:
             return None
 
@@ -158,13 +158,17 @@ class IngestionService:
         forecast = self._forecast_linear(points, hard_limit, safety_margin_pct)
         series_hash = self._series_sha256(points)
 
+        # Utilization expressed as % of hard capacity limit (0-100) so the
+        # TelemetryWindowSummary constraint holds for count/kW/seat resources too.
+        current_utilization_pct = min(100.0, round((current / hard_limit) * 100.0, 2))
+
         telemetry = TelemetryWindowSummary(
             window_start=points[0].timestamp,
             window_end=points[-1].timestamp,
             rack_id=rack_id,
             tenant_id=tenant_id,
             resource_type=resource_type,
-            current_utilization_pct=round(current, 2),
+            current_utilization_pct=current_utilization_pct,
             safety_margin_pct=safety_margin_pct,
             hard_capacity_limit=hard_limit,
             unit=unit,
