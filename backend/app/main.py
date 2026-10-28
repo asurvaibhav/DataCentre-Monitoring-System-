@@ -12,6 +12,7 @@ from app.core.ao02_state_and_graph import (
     SharedContextHeap,
     PriorityTokenQueue,
 )
+from app.services.streaming import broadcast_token_transition, broadcast_queue_update
 from app.workflow import build_ao02_workflow
 
 # Shared infra singletons wired across the 6-phase LangGraph pipeline.
@@ -39,11 +40,12 @@ app.add_middleware(
 )
 
 # API routers
-from app.api.routers import heap, ingest, queue, telemetry  # noqa: E402
+from app.api.routers import heap, ingest, queue, stream, telemetry  # noqa: E402
 
 app.include_router(telemetry.router)
 app.include_router(queue.router)
 app.include_router(heap.router)
+app.include_router(stream.router)
 app.include_router(ingest.router)
 
 

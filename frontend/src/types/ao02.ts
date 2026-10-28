@@ -40,4 +40,5 @@ export interface QueuedIncidentTokenDTO {
   utilizationPct: number;
   leadTimeWeeks: number;
   hopCount: number;
+  maxAllowedHops?: number;
 }

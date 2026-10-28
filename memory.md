@@ -99,6 +99,58 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 ### Next Pending Steps
 - Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend (Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, Human-in-the-Loop Console).
 
+## Entry 006 — 2026-10-28 | Session: step4-websocket-frontend
+
+### Summary of Changes
+- Step 4 complete: FastAPI WebSocket streaming endpoint + decoupled React + Vite + TypeScript + Tailwind frontend.
+- `backend/app/api/routers/stream.py`: WebSocket endpoint `/stream/agent-events` for live agent graph state transitions; HTTP fallback `/stream/queue/snapshot`. Includes `ConnectionManager` for broadcast to all connected clients.
+- `backend/app/services/streaming.py`: `broadcast_token_transition()` and `broadcast_queue_update()` pub/sub helpers for agent nodes to push live events.
+- `backend/app/workflow.py`: each node now broadcasts phase transitions and queue updates via WebSocket after execution.
+- `backend/app/main.py`: mounts `stream.router`; version 0.4.0.
+- `frontend/src/services/api.ts`: decoupled REST API client (telemetry, queue, heap, agent run, scan) — all backend communication lives here.
+- `frontend/src/services/websocket.ts`: `WSClient` with auto-reconnect, typed `StreamEvent` union, subscribe/unsubscribe pattern.
+- `frontend/src/store/ao02Store.tsx`: headless state store (React Context + useReducer) holding telemetry, queue tokens, heap envelopes, and stream state. Actions: `fetchWindow`, `runAgentPipeline`, `scanResources`. Subscribes to WebSocket on mount.
+- `frontend/src/hooks/useTelemetry.ts`, `useQueue.ts`, `useAgentStream.ts`: headless hooks consuming the store.
+- `frontend/src/components/layout/Sidebar.tsx`, `Header.tsx`: navigation shell.
+- `frontend/src/components/common/SeverityBadge.tsx`, `MetricCard.tsx`: decoupled UI primitives using semantic Tailwind tokens.
+- `frontend/src/components/rack-map/`: `IsometricRackMap.tsx` (2.5D isometric grid R-01–R-12 + CRAC A/B with severity dots, active badges, power load bars), `RackMapPage.tsx` (assembles from store).
+- `frontend/src/components/forecasting/`: `ForecastChart.tsx` (SVG time-series with confidence cone, area fill, grid, axes), `ForecastPage.tsx` (workbench with resource selector).
+- `frontend/src/components/queue-visualizer/TokenQueueVisualizer.tsx`: priority-ordered token table with phase badges, hop count vs max, utilization, lead time.
+- `frontend/src/components/hitl-console/HITLConsole.tsx`: RCA findings, remediation simulations (read-only), risk score gauge, operator approve/reject/defer buttons, audit trail log.
+- `frontend/src/App.tsx`: app shell wiring store provider, sidebar, header, and page routing.
+- `frontend/`: `vite.config.ts`, `tailwind.config.js`, `postcss.config.js`, `tsconfig.json`, `package.json`, `index.html`, `src/main.tsx`, `src/index.css` — all from Step 1 scaffold.
+
+### Touched Files
+- `memory.md` (this entry)
+- `.gitignore` (edited — added frontend/dist/, frontend/node_modules/)
+- `backend/app/api/routers/stream.py` (new)
+- `backend/app/api/routers/__init__.py` (new)
+- `backend/app/services/streaming.py` (new)
+- `backend/app/workflow.py` (edited — added broadcasting)
+- `backend/app/main.py` (edited)
+- `frontend/src/services/api.ts` (new)
+- `frontend/src/services/websocket.ts` (new)
+- `frontend/src/services/__init__.js` (new placeholder)
+- `frontend/src/store/ao02Store.tsx` (new)
+- `frontend/src/hooks/useTelemetry.ts`, `useQueue.ts`, `useAgentStream.ts`, `__init__.js` (new)
+- `frontend/src/components/layout/Sidebar.tsx`, `Header.tsx` (new)
+- `frontend/src/components/common/SeverityBadge.tsx`, `MetricCard.tsx` (new)
+- `frontend/src/components/rack-map/*` (new)
+- `frontend/src/components/forecasting/*` (new)
+- `frontend/src/components/queue-visualizer/*` (new)
+- `frontend/src/components/hitl-console/*` (new)
+- `frontend/src/App.tsx` (rewrote)
+
+### Architectural Impact
+- Step 4 complete: full decoupled frontend operational. Headless state & presentation pattern enforced — `src/services/` and `src/store/` contain all backend logic; components are pure presentational consumers.
+- WebSocket live streaming: agent phase transitions broadcast to frontend in real time; queue snapshot available via HTTP fallback.
+- Frontend builds cleanly with `tsc --noEmit` and `vite build` (zero TypeScript errors).
+- All four core views delivered: Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, HITL Console.
+- Tailwind design tokens in `tailwind.config.js` — future brand palette reskins need zero data-logic or component changes.
+
+### Next Pending Steps
+- All 4 steps complete. Ready for production hardening: auth/RBAC, persistent database (SQLAlchemy models already defined), WebSocket reconnection resilience, chart interactivity, and operator decision write-back to heap.
+
 ## Entry 004 — 2026-10-28 | Session: step2-bugfixes
 
 ### Summary of Changes
@@ -119,6 +171,58 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 
 ### Next Pending Steps
 - Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend (Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, Human-in-the-Loop Console).
+
+## Entry 006 — 2026-10-28 | Session: step4-websocket-frontend
+
+### Summary of Changes
+- Step 4 complete: FastAPI WebSocket streaming endpoint + decoupled React + Vite + TypeScript + Tailwind frontend.
+- `backend/app/api/routers/stream.py`: WebSocket endpoint `/stream/agent-events` for live agent graph state transitions; HTTP fallback `/stream/queue/snapshot`. Includes `ConnectionManager` for broadcast to all connected clients.
+- `backend/app/services/streaming.py`: `broadcast_token_transition()` and `broadcast_queue_update()` pub/sub helpers for agent nodes to push live events.
+- `backend/app/workflow.py`: each node now broadcasts phase transitions and queue updates via WebSocket after execution.
+- `backend/app/main.py`: mounts `stream.router`; version 0.4.0.
+- `frontend/src/services/api.ts`: decoupled REST API client (telemetry, queue, heap, agent run, scan) — all backend communication lives here.
+- `frontend/src/services/websocket.ts`: `WSClient` with auto-reconnect, typed `StreamEvent` union, subscribe/unsubscribe pattern.
+- `frontend/src/store/ao02Store.tsx`: headless state store (React Context + useReducer) holding telemetry, queue tokens, heap envelopes, and stream state. Actions: `fetchWindow`, `runAgentPipeline`, `scanResources`. Subscribes to WebSocket on mount.
+- `frontend/src/hooks/useTelemetry.ts`, `useQueue.ts`, `useAgentStream.ts`: headless hooks consuming the store.
+- `frontend/src/components/layout/Sidebar.tsx`, `Header.tsx`: navigation shell.
+- `frontend/src/components/common/SeverityBadge.tsx`, `MetricCard.tsx`: decoupled UI primitives using semantic Tailwind tokens.
+- `frontend/src/components/rack-map/`: `IsometricRackMap.tsx` (2.5D isometric grid R-01–R-12 + CRAC A/B with severity dots, active badges, power load bars), `RackMapPage.tsx` (assembles from store).
+- `frontend/src/components/forecasting/`: `ForecastChart.tsx` (SVG time-series with confidence cone, area fill, grid, axes), `ForecastPage.tsx` (workbench with resource selector).
+- `frontend/src/components/queue-visualizer/TokenQueueVisualizer.tsx`: priority-ordered token table with phase badges, hop count vs max, utilization, lead time.
+- `frontend/src/components/hitl-console/HITLConsole.tsx`: RCA findings, remediation simulations (read-only), risk score gauge, operator approve/reject/defer buttons, audit trail log.
+- `frontend/src/App.tsx`: app shell wiring store provider, sidebar, header, and page routing.
+- `frontend/`: `vite.config.ts`, `tailwind.config.js`, `postcss.config.js`, `tsconfig.json`, `package.json`, `index.html`, `src/main.tsx`, `src/index.css` — all from Step 1 scaffold.
+
+### Touched Files
+- `memory.md` (this entry)
+- `.gitignore` (edited — added frontend/dist/, frontend/node_modules/)
+- `backend/app/api/routers/stream.py` (new)
+- `backend/app/api/routers/__init__.py` (new)
+- `backend/app/services/streaming.py` (new)
+- `backend/app/workflow.py` (edited — added broadcasting)
+- `backend/app/main.py` (edited)
+- `frontend/src/services/api.ts` (new)
+- `frontend/src/services/websocket.ts` (new)
+- `frontend/src/services/__init__.js` (new placeholder)
+- `frontend/src/store/ao02Store.tsx` (new)
+- `frontend/src/hooks/useTelemetry.ts`, `useQueue.ts`, `useAgentStream.ts`, `__init__.js` (new)
+- `frontend/src/components/layout/Sidebar.tsx`, `Header.tsx` (new)
+- `frontend/src/components/common/SeverityBadge.tsx`, `MetricCard.tsx` (new)
+- `frontend/src/components/rack-map/*` (new)
+- `frontend/src/components/forecasting/*` (new)
+- `frontend/src/components/queue-visualizer/*` (new)
+- `frontend/src/components/hitl-console/*` (new)
+- `frontend/src/App.tsx` (rewrote)
+
+### Architectural Impact
+- Step 4 complete: full decoupled frontend operational. Headless state & presentation pattern enforced — `src/services/` and `src/store/` contain all backend logic; components are pure presentational consumers.
+- WebSocket live streaming: agent phase transitions broadcast to frontend in real time; queue snapshot available via HTTP fallback.
+- Frontend builds cleanly with `tsc --noEmit` and `vite build` (zero TypeScript errors).
+- All four core views delivered: Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, HITL Console.
+- Tailwind design tokens in `tailwind.config.js` — future brand palette reskins need zero data-logic or component changes.
+
+### Next Pending Steps
+- All 4 steps complete. Ready for production hardening: auth/RBAC, persistent database (SQLAlchemy models already defined), WebSocket reconnection resilience, chart interactivity, and operator decision write-back to heap.
 
 ## Entry 005 — 2026-10-28 | Session: step3-agents-langgraph
 
@@ -160,3 +264,55 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 
 ### Next Pending Steps
 - Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend (Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, Human-in-the-Loop Console).
+
+## Entry 006 — 2026-10-28 | Session: step4-websocket-frontend
+
+### Summary of Changes
+- Step 4 complete: FastAPI WebSocket streaming endpoint + decoupled React + Vite + TypeScript + Tailwind frontend.
+- `backend/app/api/routers/stream.py`: WebSocket endpoint `/stream/agent-events` for live agent graph state transitions; HTTP fallback `/stream/queue/snapshot`. Includes `ConnectionManager` for broadcast to all connected clients.
+- `backend/app/services/streaming.py`: `broadcast_token_transition()` and `broadcast_queue_update()` pub/sub helpers for agent nodes to push live events.
+- `backend/app/workflow.py`: each node now broadcasts phase transitions and queue updates via WebSocket after execution.
+- `backend/app/main.py`: mounts `stream.router`; version 0.4.0.
+- `frontend/src/services/api.ts`: decoupled REST API client (telemetry, queue, heap, agent run, scan) — all backend communication lives here.
+- `frontend/src/services/websocket.ts`: `WSClient` with auto-reconnect, typed `StreamEvent` union, subscribe/unsubscribe pattern.
+- `frontend/src/store/ao02Store.tsx`: headless state store (React Context + useReducer) holding telemetry, queue tokens, heap envelopes, and stream state. Actions: `fetchWindow`, `runAgentPipeline`, `scanResources`. Subscribes to WebSocket on mount.
+- `frontend/src/hooks/useTelemetry.ts`, `useQueue.ts`, `useAgentStream.ts`: headless hooks consuming the store.
+- `frontend/src/components/layout/Sidebar.tsx`, `Header.tsx`: navigation shell.
+- `frontend/src/components/common/SeverityBadge.tsx`, `MetricCard.tsx`: decoupled UI primitives using semantic Tailwind tokens.
+- `frontend/src/components/rack-map/`: `IsometricRackMap.tsx` (2.5D isometric grid R-01–R-12 + CRAC A/B with severity dots, active badges, power load bars), `RackMapPage.tsx` (assembles from store).
+- `frontend/src/components/forecasting/`: `ForecastChart.tsx` (SVG time-series with confidence cone, area fill, grid, axes), `ForecastPage.tsx` (workbench with resource selector).
+- `frontend/src/components/queue-visualizer/TokenQueueVisualizer.tsx`: priority-ordered token table with phase badges, hop count vs max, utilization, lead time.
+- `frontend/src/components/hitl-console/HITLConsole.tsx`: RCA findings, remediation simulations (read-only), risk score gauge, operator approve/reject/defer buttons, audit trail log.
+- `frontend/src/App.tsx`: app shell wiring store provider, sidebar, header, and page routing.
+- `frontend/`: `vite.config.ts`, `tailwind.config.js`, `postcss.config.js`, `tsconfig.json`, `package.json`, `index.html`, `src/main.tsx`, `src/index.css` — all from Step 1 scaffold.
+
+### Touched Files
+- `memory.md` (this entry)
+- `.gitignore` (edited — added frontend/dist/, frontend/node_modules/)
+- `backend/app/api/routers/stream.py` (new)
+- `backend/app/api/routers/__init__.py` (new)
+- `backend/app/services/streaming.py` (new)
+- `backend/app/workflow.py` (edited — added broadcasting)
+- `backend/app/main.py` (edited)
+- `frontend/src/services/api.ts` (new)
+- `frontend/src/services/websocket.ts` (new)
+- `frontend/src/services/__init__.js` (new placeholder)
+- `frontend/src/store/ao02Store.tsx` (new)
+- `frontend/src/hooks/useTelemetry.ts`, `useQueue.ts`, `useAgentStream.ts`, `__init__.js` (new)
+- `frontend/src/components/layout/Sidebar.tsx`, `Header.tsx` (new)
+- `frontend/src/components/common/SeverityBadge.tsx`, `MetricCard.tsx` (new)
+- `frontend/src/components/rack-map/*` (new)
+- `frontend/src/components/forecasting/*` (new)
+- `frontend/src/components/queue-visualizer/*` (new)
+- `frontend/src/components/hitl-console/*` (new)
+- `frontend/src/App.tsx` (rewrote)
+
+### Architectural Impact
+- Step 4 complete: full decoupled frontend operational. Headless state & presentation pattern enforced — `src/services/` and `src/store/` contain all backend logic; components are pure presentational consumers.
+- WebSocket live streaming: agent phase transitions broadcast to frontend in real time; queue snapshot available via HTTP fallback.
+- Frontend builds cleanly with `tsc --noEmit` and `vite build` (zero TypeScript errors).
+- All four core views delivered: Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, HITL Console.
+- Tailwind design tokens in `tailwind.config.js` — future brand palette reskins need zero data-logic or component changes.
+
+### Next Pending Steps
+- All 4 steps complete. Ready for production hardening: auth/RBAC, persistent database (SQLAlchemy models already defined), WebSocket reconnection resilience, chart interactivity, and operator decision write-back to heap.
