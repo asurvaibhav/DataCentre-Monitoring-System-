@@ -99,3 +99,25 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 ### Next Pending Steps
 - Step 3: Implement Forecasting Engine enhancements and wire 3 core agents (Resource Monitoring, RCA, Remediation) + Risk & Verification gates in LangGraph with Gemini/OpenAI structured outputs.
 - Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend.
+
+## Entry 004 — 2026-10-28 | Session: step2-bugfixes
+
+### Summary of Changes
+- Fixed two bugs surfaced by the Step 2 end-to-end TestClient verification.
+- `backend/app/services/ingestion.py`:
+  - `evaluate_and_mint`: compute `current_utilization_pct` as `(current / hard_limit) * 100`, clamped to 100.0, so count/kW/seat resources (VM_COMPUTE, POWER, NETWORK, SOFTWARE_LICENSE) satisfy the `TelemetryWindowSummary.current_utilization_pct le=100` schema constraint instead of raising Pydantic validation errors on over-capacity resources (e.g., R-07 power spiking to 103.6).
+  - `scan_all_resources`: replaced call to removed private `_get_latest_window` with the public `get_latest_window` accessor.
+- Added `.gitignore` excluding `__pycache__/`, `*.pyc`, `.env`, `*.db`, IDE/OS files so compiled artifacts and local DB/env aren't committed.
+
+### Touched Files
+- `memory.md` (this entry)
+- `backend/app/services/ingestion.py` (edited)
+- `.gitignore` (new)
+
+### Architectural Impact
+- Ingestion pipeline now handles all six resource types without schema violations, including resources that exceed their hard capacity limit (reported as 100% utilization — critical severity).
+- Verified end-to-end via FastAPI TestClient: telemetry generation (872,640 points), /ingest/scan (53 tokens minted), /queue/snapshot (priority-ordered), /heap tenant-isolation (403 for wrong tenant, 200 for facility operator / correct tenant).
+
+### Next Pending Steps
+- Step 3: Implement Forecasting Engine enhancements and wire 3 core agents (Resource Monitoring, RCA, Remediation) + Risk & Verification gates in LangGraph with Gemini/OpenAI structured outputs.
+- Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend.
