@@ -97,8 +97,7 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 - LangGraph 6-phase workflow blueprint is compiled and ready for agent node LLM wiring in Step 3.
 
 ### Next Pending Steps
-- Step 3: Implement Forecasting Engine enhancements and wire 3 core agents (Resource Monitoring, RCA, Remediation) + Risk & Verification gates in LangGraph with Gemini/OpenAI structured outputs.
-- Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend.
+- Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend (Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, Human-in-the-Loop Console).
 
 ## Entry 004 — 2026-10-28 | Session: step2-bugfixes
 
@@ -119,5 +118,45 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 - Verified end-to-end via FastAPI TestClient: telemetry generation (872,640 points), /ingest/scan (53 tokens minted), /queue/snapshot (priority-ordered), /heap tenant-isolation (403 for wrong tenant, 200 for facility operator / correct tenant).
 
 ### Next Pending Steps
-- Step 3: Implement Forecasting Engine enhancements and wire 3 core agents (Resource Monitoring, RCA, Remediation) + Risk & Verification gates in LangGraph with Gemini/OpenAI structured outputs.
-- Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend.
+- Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend (Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, Human-in-the-Loop Console).
+
+## Entry 005 — 2026-10-28 | Session: step3-agents-langgraph
+
+### Summary of Changes
+- Step 3 complete: LLM provider abstraction, 3 core agents + risk agent, LangGraph workflow wired end-to-end.
+- `backend/requirements.txt`: added `google-generativeai==0.8.3` and `openai==1.40.0`.
+- `backend/app/core/llm_provider.py`: unified LLM provider abstraction with `LLMProvider` ABC, `GeminiProvider` (structured JSON via `response_mime_type`/`response_schema`), `OpenAIProvider` (structured JSON via `response_format`), and `_MockProvider` deterministic fallback when no API key is configured. `get_llm_provider()` factory reads `LLM_PROVIDER`/`GEMINI_API_KEY`/`OPENAI_API_KEY` env vars.
+- `backend/app/api/deps.py`: added `get_llm_provider()` singleton dependency.
+- `backend/app/agents/base.py`: `BaseAgent` with heap access, LLM provider, `_advance()` (hop increment + phase transition + immutable audit write), and `_llm_structured()` wrapper.
+- `backend/app/agents/monitoring_agent.py`: `ResourceMonitoringAgent` — Phase 1. Evaluates forecast, suppresses transient spikes (false-alarm filtering), detects regime changes, escalates critical lead times, advances to incident reporting.
+- `backend/app/agents/rca_agent.py`: `RCAAgent` — Phase 3. Calls LLM with `RCADiagnosis` schema, attributes trend to tenant/workload, correlates cross-resource signals.
+- `backend/app/agents/remediation_agent.py`: `RemediationAgent` — Phase 4. Calls LLM with `RemediationOption` schema, enforces `mutates_live_facility_controls=False` read-only safety constraint.
+- `backend/app/agents/risk_agent.py`: `RiskAgent` — Phase 5. Computes deterministic risk score (utilization, lead time urgency, confidence, regime shift), calls LLM with `RiskEvaluation` schema, issues `GateDecision`.
+- `backend/app/workflow.py`: `AO02Workflow` builds and compiles the LangGraph state machine with monitoring → incident_reporting → rca_agent → remediation_agent → risk_analysis → human_verification, `interrupt_before=["human_verification"]` for live human-in-the-loop pause. Dequeuing handled outside the graph.
+- `backend/app/main.py`: version 0.3.0, wires workflow, LLM provider, adds POST `/agents/run` endpoint that dequeues highest-priority token and runs it through the pipeline. Fixed `queue` variable name collision with imported routers module (renamed singleton to `token_queue`).
+- `backend/app/services/ingestion.py`: replaced `_forecast_linear` with `_forecast_enhanced` — linear regression with R-squared confidence, residual-based confidence intervals, sliding-window regime-change detection, improved transient-spike suppression.
+
+### Touched Files
+- `memory.md` (this entry)
+- `backend/requirements.txt` (edited)
+- `backend/app/core/llm_provider.py` (new)
+- `backend/app/api/deps.py` (edited)
+- `backend/app/agents/__init__.py` (new)
+- `backend/app/agents/base.py` (new)
+- `backend/app/agents/monitoring_agent.py` (new)
+- `backend/app/agents/rca_agent.py` (new)
+- `backend/app/agents/remediation_agent.py` (new)
+- `backend/app/agents/risk_agent.py` (new)
+- `backend/app/workflow.py` (new)
+- `backend/app/main.py` (edited)
+- `backend/app/services/ingestion.py` (edited)
+
+### Architectural Impact
+- Full 6-phase LangGraph pipeline operational: dequeue → monitoring → incident reporting → RCA → remediation → risk → human verification (interrupt).
+- LLM provider abstraction supports Gemini, OpenAI, or deterministic mock (no API key needed for sandbox/demo).
+- All agent outputs are structured Pydantic models with immutable audit trail in the Shared Heap.
+- Read-only safety constraint enforced: `mutates_live_facility_controls=False` on all remediation options.
+- End-to-end verified: 53 tokens minted from scan, top-priority token processed through all phases, heap envelope fully populated with RCA, remediation, risk evaluation, and 6 audit entries.
+
+### Next Pending Steps
+- Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend (Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, Human-in-the-Loop Console).

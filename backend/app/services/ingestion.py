@@ -67,28 +67,46 @@ class IngestionService:
         )
         return hashlib.sha256(payload.encode()).hexdigest()
 
-    def _forecast_linear(
+    def _forecast_enhanced(
         self,
         points: List[TelemetryPoint],
+        resource_type: ResourceType,
         hard_limit: float,
         safety_margin_pct: float,
     ) -> CapacityForecast:
-        """Simple linear-regression time-to-exhaustion forecast (Step 2 baseline)."""
-        if len(points) < 2:
+        """Enhanced time-to-exhaustion forecast.
+
+        Uses linear regression on the full window with R-squared confidence,
+        transient-spike suppression (recent values resolving back below the
+        safety margin), and regime-change detection via sliding-window mean
+        shift. Confidence intervals are derived from residual standard error.
+        """
+        if len(points) < 10:
             return CapacityForecast(
                 lead_time_weeks=999.0,
                 confidence_interval_days=(999.0, 999.0),
                 forecast_confidence_score=0.0,
             )
 
-        values = np.array([p.value for p in points])
-        hours = np.arange(len(points))
-
-        slope, intercept = np.polyfit(hours, values, 1)
+        values = np.array([p.value for p in points], dtype=float)
+        hours = np.arange(len(values), dtype=float)
         current = float(values[-1])
         margin_limit = hard_limit * (safety_margin_pct / 100.0)
 
-        if slope > 0:
+        # --- Linear regression ---
+        slope, intercept = np.polyfit(hours, values, 1)
+        fitted = slope * hours + intercept
+        residuals = values - fitted
+        resid_std = float(np.std(residuals)) if len(residuals) > 1 else 0.0
+
+        # R-squared for forecast confidence.
+        ss_res = float(np.sum(residuals ** 2))
+        ss_tot = float(np.sum((values - np.mean(values)) ** 2))
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+        r_squared = float(np.clip(r_squared, 0.0, 1.0))
+
+        # --- Time to exhaustion ---
+        if slope > 1e-6:
             hours_to_limit = (margin_limit - current) / slope
         else:
             hours_to_limit = 9999.0
@@ -98,28 +116,44 @@ class IngestionService:
         if 0 < hours_to_limit < 9999.0:
             predicted_exhaustion = points[-1].timestamp + timedelta(hours=hours_to_limit)
 
-        residuals = values - (slope * hours + intercept)
-        resid_std = float(np.std(residuals)) if len(residuals) > 1 else 0.0
-        ci_lower = max(0.0, lead_time_weeks * 7 - resid_std)
-        ci_upper = lead_time_weeks * 7 + resid_std
+        # --- Confidence interval (days) from residual standard error ---
+        # Standard error of the forecast grows with horizon; use resid_std * sqrt(hours).
+        forecast_horizon_hours = max(hours_to_limit, 24.0)
+        ci_days = resid_std * np.sqrt(forecast_horizon_hours / 24.0)
+        ci_lower = max(0.0, lead_time_weeks * 7 - ci_days)
+        ci_upper = lead_time_weeks * 7 + ci_days
 
-        # Transient spike: recent values resolving back below margin
-        recent = values[-24:]
+        # --- Transient spike detection ---
+        # A spike is transient if recent values (last 12h) are declining back
+        # toward baseline while the long-term slope is positive.
+        recent = values[-12:]
+        earlier = values[-36:-12] if len(values) >= 36 else values[:-12]
         is_transient = bool(
             slope > 0
-            and np.mean(recent[-6:]) < np.mean(recent[:6]) * 0.8
+            and len(earlier) > 0
+            and float(np.mean(recent)) < float(np.mean(earlier)) * 0.85
             and current < margin_limit * 0.9
         )
 
-        # Regime change: step change in mean between first and second half
-        mid = len(values) // 2
-        regime_change = bool(
-            abs(float(np.mean(values[mid:])) - float(np.mean(values[:mid]))) > 10.0
-        )
+        # --- Regime change detection via sliding-window mean shift ---
+        # Compare the mean of the last quarter vs. the rest of the window.
+        q = max(len(values) // 4, 24)
+        recent_mean = float(np.mean(values[-q:]))
+        prior_mean = float(np.mean(values[:-q])) if len(values) > q else recent_mean
+        regime_shift_magnitude = abs(recent_mean - prior_mean)
+        # Threshold: shift greater than 10% of the hard limit is significant.
+        regime_change = bool(regime_shift_magnitude > hard_limit * 0.10)
+        regime_description = None
+        if regime_change:
+            direction = "increase" if recent_mean > prior_mean else "decrease"
+            regime_description = (
+                f"Step-change in {resource_type.value.lower()} trend: "
+                f"{direction} of {regime_shift_magnitude:.1f} detected in "
+                f"recent {q}-hour window."
+            )
 
-        confidence = float(
-            np.clip(1.0 - (resid_std / max(current, 1.0)), 0.1, 1.0)
-        )
+        # --- Confidence score combines R-squared and residual noise ---
+        confidence = float(np.clip(r_squared * (1.0 - min(resid_std / max(current, 1.0), 0.5)), 0.1, 1.0))
 
         return CapacityForecast(
             predicted_exhaustion_date=predicted_exhaustion,
@@ -128,10 +162,9 @@ class IngestionService:
             forecast_confidence_score=round(confidence, 3),
             is_transient_spike=is_transient,
             regime_change_detected=regime_change,
-            regime_change_description=(
-                "Step-change in utilization trend detected" if regime_change else None
-            ),
+            regime_change_description=regime_description,
         )
+
 
     def evaluate_and_mint(
         self,
@@ -155,7 +188,7 @@ class IngestionService:
         if current < margin_limit:
             return None  # Below safety margin — no incident
 
-        forecast = self._forecast_linear(points, hard_limit, safety_margin_pct)
+        forecast = self._forecast_enhanced(points, resource_type, hard_limit, safety_margin_pct)
         series_hash = self._series_sha256(points)
 
         # Utilization expressed as % of hard capacity limit (0-100) so the
