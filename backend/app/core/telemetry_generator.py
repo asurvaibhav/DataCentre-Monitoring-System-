@@ -60,6 +60,7 @@ class TelemetryGenerator:
         self.start_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
         self.end_date = self.start_date + timedelta(days=DAYS_PER_MONTH * months)
         self.points: List[TelemetryPoint] = []
+        self._index: Optional[Dict[tuple, List[TelemetryPoint]]] = None
 
     def _hourly_index(self) -> List[datetime]:
         return [self.start_date + timedelta(hours=i) for i in range(TOTAL_HOURS)]
@@ -215,6 +216,7 @@ class TelemetryGenerator:
             )
 
         self.points = all_points
+        self._index = None
         return all_points
 
     def _to_points(
@@ -238,6 +240,21 @@ class TelemetryGenerator:
             for ts, v in zip(timestamps, series)
         ]
 
+    def _ensure_generated(self) -> None:
+        """Generate the dataset on first access so the API never depends on
+        a previous /telemetry/generate call."""
+        if not self.points:
+            self.generate()
+
+    def _build_index(self) -> None:
+        index: Dict[tuple, List[TelemetryPoint]] = {}
+        for point in self.points:
+            key = (point.rack_id, point.tenant_id, point.resource_type)
+            index.setdefault(key, []).append(point)
+        for series in index.values():
+            series.sort(key=lambda p: p.timestamp)
+        self._index = index
+
     def get_series(
         self,
         rack_id: str,
@@ -245,15 +262,20 @@ class TelemetryGenerator:
         resource_type: ResourceType,
     ) -> List[TelemetryPoint]:
         """Return all points for a given rack/tenant/resource, sorted by time."""
-        series = [
-            p
-            for p in self.points
-            if p.rack_id == rack_id
-            and p.tenant_id == tenant_id
-            and p.resource_type == resource_type
-        ]
-        series.sort(key=lambda p: p.timestamp)
-        return series
+        self._ensure_generated()
+        if self._index is None:
+            self._build_index()
+        return self._index.get((rack_id, tenant_id, resource_type), [])
+
+    def latest_point(
+        self,
+        rack_id: str,
+        tenant_id: str,
+        resource_type: ResourceType,
+    ) -> Optional[TelemetryPoint]:
+        """Return the most recent point of a series, or None when absent."""
+        series = self.get_series(rack_id, tenant_id, resource_type)
+        return series[-1] if series else None
 
     def get_latest_window(
         self,

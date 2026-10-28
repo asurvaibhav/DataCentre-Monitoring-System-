@@ -9,7 +9,7 @@ reporting when a genuine breach is confirmed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from app.core.ao02_state_and_graph import (
     CapacityForecast,

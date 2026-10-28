@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from app.core.ao02_state_and_graph import PriorityTokenQueue, SharedContextHeap
 from app.core.llm_provider import LLMProvider, get_llm_provider as _build_provider
@@ -12,6 +12,7 @@ _heap: Optional[SharedContextHeap] = None
 _queue: Optional[PriorityTokenQueue] = None
 _ingestion: Optional[IngestionService] = None
 _llm: Optional[LLMProvider] = None
+_workflow: Optional[Any] = None
 
 
 def get_heap() -> SharedContextHeap:
@@ -40,3 +41,14 @@ def get_llm_provider() -> LLMProvider:
     if _llm is None:
         _llm = _build_provider()
     return _llm
+
+
+def get_workflow() -> Any:
+    """Compiled LangGraph pipeline singleton (shared heap + LLM provider)."""
+    global _workflow
+    if _workflow is None:
+        # Imported lazily to avoid a circular import with app.workflow.
+        from app.workflow import build_ao02_workflow
+
+        _workflow = build_ao02_workflow(get_heap(), get_llm_provider())
+    return _workflow

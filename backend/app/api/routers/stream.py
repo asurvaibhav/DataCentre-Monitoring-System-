@@ -11,12 +11,14 @@ import asyncio
 import json
 from typing import Any, Set
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.api.deps import get_heap, get_queue
+from app.api.serializers import serialize_token
 
 router = APIRouter(prefix="/stream", tags=["streaming"])
+
+HEARTBEAT_SECONDS = 20
 
 
 class ConnectionManager:
@@ -53,60 +55,40 @@ manager = ConnectionManager()
 async def agent_events(websocket: WebSocket) -> None:
     """WebSocket stream for live agent graph state transitions.
 
-    Clients connect and receive JSON messages whenever the LangGraph
-    pipeline advances a token through a phase, including phase changes,
-    hop counts, risk scores, and human-verification prompts.
+    On connect the client receives a queue snapshot, then every pipeline
+    transition and queue change as it happens. Idle connections receive a
+    heartbeat every 20s so proxies do not silently close the socket.
     """
     await manager.connect(websocket)
     try:
-        # Send an initial snapshot of the current queue state.
         queue = get_queue()
+        heap = get_heap()
         snapshot = {
             "type": "queue_snapshot",
-            "tokens": [
-                {
-                    "token_id": t.token_id,
-                    "priority_number": t.priority_number,
-                    "rack_id": t.rack_id,
-                    "tenant_id": t.tenant_id,
-                    "resource_type": t.resource_type.value,
-                    "current_phase": t.current_phase.value,
-                    "hop_count": t.hop_count,
-                    "created_at": t.created_at.isoformat(),
-                }
-                for t in queue.snapshot()
-            ],
+            "tokens": [serialize_token(token, heap) for token in queue.snapshot()],
         }
         await websocket.send_text(json.dumps(snapshot, default=str))
 
-        # Keep the connection open; the pipeline pushes events via manager.broadcast
-        # from agent nodes / API endpoints. Here we simply hold the socket.
         while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
+            try:
+                await asyncio.wait_for(
+                    websocket.receive_text(), timeout=HEARTBEAT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                await websocket.send_text(json.dumps({"type": "ping"}))
+    except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
+        pass
+    finally:
         manager.disconnect(websocket)
 
 
 @router.get("/queue/snapshot")
-async def queue_snapshot() -> JSONResponse:
+async def queue_snapshot() -> dict[str, Any]:
     """HTTP fallback for the current priority queue snapshot."""
     queue = get_queue()
+    heap = get_heap()
     tokens = queue.snapshot()
-    return JSONResponse(
-        content={
-            "count": len(tokens),
-            "tokens": [
-                {
-                    "token_id": t.token_id,
-                    "priority_number": t.priority_number,
-                    "rack_id": t.rack_id,
-                    "tenant_id": t.tenant_id,
-                    "resource_type": t.resource_type.value,
-                    "current_phase": t.current_phase.value,
-                    "hop_count": t.hop_count,
-                    "created_at": t.created_at.isoformat(),
-                }
-                for t in tokens
-            ],
-        }
-    )
+    return {
+        "count": len(tokens),
+        "tokens": [serialize_token(token, heap) for token in tokens],
+    }

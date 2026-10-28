@@ -1,30 +1,30 @@
-// frontend/src/components/common/MetricCard.tsx
-// Decoupled metric card using semantic CSS tokens.
+// Compact metric card with optional semantic tone.
 
 interface MetricCardProps {
   title: string;
   value: string | number;
   subtext?: string;
-  trend?: "up" | "down" | "neutral";
+  tone?: "neutral" | "ok" | "warn" | "critical" | "accent";
 }
 
-export function MetricCard({ title, value, subtext, trend }: MetricCardProps) {
+const TONE_TEXT: Record<NonNullable<MetricCardProps["tone"]>, string> = {
+  neutral: "text-white",
+  ok: "text-brand-ok",
+  warn: "text-brand-warn",
+  critical: "text-brand-critical",
+  accent: "text-brand-accent",
+};
+
+export function MetricCard({ title, value, subtext, tone = "neutral" }: MetricCardProps) {
   return (
-    <div className="p-4 rounded-xl border border-brand-surface bg-brand-surface/50">
-      <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider">{title}</h3>
-      <div className="mt-1 flex items-baseline gap-1">
-        <span className="text-2xl font-semibold text-white">{value}</span>
-        {subtext && <span className="text-sm text-gray-500">{subtext}</span>}
-      </div>
-      {trend && (
-        <span
-          className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
-            trend === "up" ? "text-brand-warn" : trend === "down" ? "text-brand-ok" : "text-gray-500"
-          }`}
-        >
-          {trend === "up" ? "▲" : trend === "down" ? "▼" : "—"} {trend}
-        </span>
-      )}
+    <div className="rounded-xl border border-brand-surface bg-brand-surface/40 p-4">
+      <h3 className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+        {title}
+      </h3>
+      <p className={`mt-1 text-2xl font-semibold tabular-nums ${TONE_TEXT[tone]}`}>
+        {value}
+      </p>
+      {subtext && <p className="mt-0.5 text-xs text-slate-500">{subtext}</p>}
     </div>
   );
 }

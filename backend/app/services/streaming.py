@@ -36,24 +36,14 @@ async def broadcast_token_transition(
 
 async def broadcast_queue_update() -> None:
     """Broadcast a full queue snapshot to all WebSocket subscribers."""
-    from app.api.deps import get_queue
+    from app.api.deps import get_heap, get_queue
+    from app.api.serializers import serialize_token
 
     queue = get_queue()
+    heap = get_heap()
     await manager.broadcast(
         {
             "type": "queue_update",
-            "tokens": [
-                {
-                    "token_id": t.token_id,
-                    "priority_number": t.priority_number,
-                    "rack_id": t.rack_id,
-                    "tenant_id": t.tenant_id,
-                    "resource_type": t.resource_type.value,
-                    "current_phase": t.current_phase.value,
-                    "hop_count": t.hop_count,
-                    "created_at": t.created_at.isoformat(),
-                }
-                for t in queue.snapshot()
-            ],
+            "tokens": [serialize_token(token, heap) for token in queue.snapshot()],
         }
     )

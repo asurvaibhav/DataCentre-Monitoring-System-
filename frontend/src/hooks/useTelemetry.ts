@@ -1,15 +1,14 @@
-// frontend/src/hooks/useTelemetry.ts
-// Headless hook for telemetry data. No UI logic here.
+// Headless hook for telemetry windows. No UI logic here.
 
 import { useAO02Store } from "@/store/ao02Store";
 
 export function useTelemetry() {
   const { state, actions } = useAO02Store();
   return {
-    points: state.points,
-    window: state.window,
-    loading: state.loading,
+    window: state.telemetryWindow,
+    windowKey: state.telemetryKey,
+    loading: state.loading.telemetry,
     error: state.error,
-    fetchWindow: actions.fetchWindow,
+    loadTelemetry: actions.loadTelemetry,
   };
 }

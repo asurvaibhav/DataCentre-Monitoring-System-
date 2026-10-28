@@ -38,6 +38,7 @@ class PipelinePhase(str, Enum):
     RISK_ANALYSIS = "05_RISK_ANALYSIS"
     HUMAN_VERIFICATION = "06_HUMAN_VERIFICATION"
     RESOLVED = "07_RESOLVED"
+    REJECTED = "08_REJECTED_BY_OPERATOR"
     HALTED_LOOP_GUARD = "99_HALTED_LOOP_GUARD"
 
 
@@ -249,6 +250,17 @@ class PriorityTokenQueue:
         """Returns ordered list of queued tokens for the frontend Queue Dataset visualizer."""
         return [item[3] for item in sorted(self._heap, key=lambda x: (x[0], x[1]))]
 
+    def requeue(self, token: IncidentToken) -> None:
+        """Restore a token that was dequeued but failed downstream processing."""
+        dedup_key = f"{token.rack_id}:{token.tenant_id}:{token.resource_type.value}"
+        if dedup_key in self._active_resource_keys:
+            return
+        self._active_resource_keys[dedup_key] = token.token_id
+        heapq.heappush(
+            self._heap,
+            (token.priority_number, token.created_at.timestamp(), token.token_id, token),
+        )
+
 
 # ============================================================================
 # 4. SHARED CONTEXT HEAP & MULTI-TENANT ISOLATION GUARD ("HEAP MEMORY")
@@ -291,6 +303,10 @@ class SharedContextHeap:
         if token_id not in self._store:
             raise KeyError(f"Token {token_id} not found in Shared Context Heap.")
         return self._store[token_id]
+
+    def all_envelopes(self) -> List[HeapIncidentEnvelope]:
+        """Return every stored envelope (ordered by token creation time)."""
+        return sorted(self._store.values(), key=lambda env: env.token.created_at)
 
     def get_tenant_isolated_view(
         self, token_id: str, requesting_tenant_id: str, is_facility_operator: bool = False

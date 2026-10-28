@@ -7,13 +7,15 @@ interrupt_before=["human_verification"] for live human-in-the-loop pause.
 
 Dequeuing is handled outside the graph (in the API endpoint) so the caller
 controls which token enters the pipeline.
+
+Nodes are async: LangGraph awaits them on the API event loop, which lets them
+await the real agent coroutines and broadcast WebSocket events directly
+without nesting event loops.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
-
-import asyncio
+from typing import Optional
 
 from langgraph.graph import END, StateGraph
 
@@ -29,46 +31,6 @@ from app.core.ao02_state_and_graph import (
 )
 from app.core.llm_provider import LLMProvider
 from app.services.streaming import broadcast_queue_update, broadcast_token_transition
-
-
-def _broadcast_transition(
-    token_id: str,
-    phase: str,
-    hop_count: int,
-    summary: str,
-    awaiting_human: bool = False,
-    should_halt: bool = False,
-    halt_reason: str | None = None,
-) -> None:
-    """Fire-and-forget broadcast of a token phase transition to WebSocket clients."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(
-                broadcast_token_transition(
-                    token_id=token_id,
-                    phase=phase,
-                    hop_count=hop_count,
-                    summary=summary,
-                    awaiting_human=awaiting_human,
-                    should_halt=should_halt,
-                    halt_reason=halt_reason,
-                )
-            )
-        else:
-            asyncio.run(
-                broadcast_token_transition(
-                    token_id=token_id,
-                    phase=phase,
-                    hop_count=hop_count,
-                    summary=summary,
-                    awaiting_human=awaiting_human,
-                    should_halt=should_halt,
-                    halt_reason=halt_reason,
-                )
-            )
-    except Exception:  # noqa: BLE001 - streaming must not break the pipeline
-        pass
 
 
 class AO02Workflow:
@@ -92,30 +54,34 @@ class AO02Workflow:
     # Nodes
     # ------------------------------------------------------------------
 
-    def _monitoring_node(self, state: AO02AgentState) -> AO02AgentState:
-        result = asyncio.run(self.monitoring.run(state["active_token_id"]))
+    async def _monitoring_node(self, state: AO02AgentState) -> AO02AgentState:
         token_id = state["active_token_id"]
-        _broadcast_transition(
+        result = await self.monitoring.run(token_id)
+
+        halt_reason = result.get("halt_reason")
+        summary = "Monitoring phase complete"
+        if halt_reason:
+            summary = f"{summary}; {halt_reason}"
+
+        await broadcast_token_transition(
             token_id=token_id,
             phase=result["current_phase"],
             hop_count=result["hop_count"],
-            summary=(
-                "Monitoring phase complete"
-                + (f"; {result.get('halt_reason', '')}" if result.get("halt_reason") else "")
-            ),
-            awaiting_human=False,
+            summary=summary,
             should_halt=result.get("should_halt", False),
-            halt_reason=result.get("halt_reason"),
+            halt_reason=halt_reason,
         )
+        await broadcast_queue_update()
+
         return {
             **state,
             "current_phase": result["current_phase"],
             "hop_count": result["hop_count"],
             "should_halt": result.get("should_halt", False),
-            "halt_reason": result.get("halt_reason"),
+            "halt_reason": halt_reason,
         }
 
-    def _incident_reporting_node(self, state: AO02AgentState) -> AO02AgentState:
+    async def _incident_reporting_node(self, state: AO02AgentState) -> AO02AgentState:
         envelope: HeapIncidentEnvelope = self.heap.get_envelope_for_agent(
             state["active_token_id"]
         )
@@ -127,45 +93,49 @@ class AO02Workflow:
                 f"Dispatched Priority-{envelope.token.priority_number} token to RCA Agent."
             ),
         )
-        _broadcast_transition(
+
+        await broadcast_token_transition(
             token_id=state["active_token_id"],
             phase=envelope.token.current_phase.value,
             hop_count=envelope.token.hop_count,
             summary=f"Priority-{envelope.token.priority_number} dispatched to RCA.",
         )
-        asyncio.run(broadcast_queue_update())
+
         return {
             **state,
             "current_phase": envelope.token.current_phase.value,
             "hop_count": envelope.token.hop_count,
         }
 
-    def _rca_node(self, state: AO02AgentState) -> AO02AgentState:
-        result = asyncio.run(self.rca.run(state["active_token_id"]))
+    async def _rca_node(self, state: AO02AgentState) -> AO02AgentState:
+        result = await self.rca.run(state["active_token_id"])
         envelope: HeapIncidentEnvelope = self.heap.get_envelope_for_agent(
             state["active_token_id"]
         )
-        _broadcast_transition(
+        attributed = (
+            envelope.rca.attributed_tenant_id if envelope.rca else "unknown"
+        )
+
+        await broadcast_token_transition(
             token_id=state["active_token_id"],
             phase=result["current_phase"],
             hop_count=result["hop_count"],
-            summary=(
-                f"RCA complete: attributed to {envelope.rca.attributed_tenant_id if envelope.rca else 'unknown'}"
-            ),
+            summary=f"RCA complete: attributed to {attributed}",
         )
-        asyncio.run(broadcast_queue_update())
+
         return {
             **state,
             "current_phase": result["current_phase"],
             "hop_count": result["hop_count"],
         }
 
-    def _remediation_node(self, state: AO02AgentState) -> AO02AgentState:
-        result = asyncio.run(self.remediation.run(state["active_token_id"]))
+    async def _remediation_node(self, state: AO02AgentState) -> AO02AgentState:
+        result = await self.remediation.run(state["active_token_id"])
         envelope: HeapIncidentEnvelope = self.heap.get_envelope_for_agent(
             state["active_token_id"]
         )
-        _broadcast_transition(
+
+        await broadcast_token_transition(
             token_id=state["active_token_id"],
             phase=result["current_phase"],
             hop_count=result["hop_count"],
@@ -173,41 +143,41 @@ class AO02Workflow:
                 f"Remediation: {len(envelope.remediation_options)} option(s) generated"
             ),
         )
-        asyncio.run(broadcast_queue_update())
+
         return {
             **state,
             "current_phase": result["current_phase"],
             "hop_count": result["hop_count"],
         }
 
-    def _risk_node(self, state: AO02AgentState) -> AO02AgentState:
-        result = asyncio.run(self.risk.run(state["active_token_id"]))
+    async def _risk_node(self, state: AO02AgentState) -> AO02AgentState:
+        result = await self.risk.run(state["active_token_id"])
         envelope: HeapIncidentEnvelope = self.heap.get_envelope_for_agent(
             state["active_token_id"]
         )
         risk = envelope.risk_evaluation
-        _broadcast_transition(
+        summary = (
+            f"Risk score {risk.risk_score:.2f}, gate {risk.gate_decision.value}"
+            if risk
+            else "Risk evaluation complete"
+        )
+
+        await broadcast_token_transition(
             token_id=state["active_token_id"],
             phase=result["current_phase"],
             hop_count=result["hop_count"],
-            summary=(
-                f"Risk score {risk.risk_score:.2f}, gate {risk.gate_decision.value}"
-                if risk
-                else "Risk evaluation complete"
-            ),
-            awaiting_human=result.get("awaiting_human_verification", False),
+            summary=summary,
+            awaiting_human=True,
         )
-        asyncio.run(broadcast_queue_update())
+
         return {
             **state,
             "current_phase": result["current_phase"],
             "hop_count": result["hop_count"],
-            "awaiting_human_verification": result.get(
-                "awaiting_human_verification", False
-            ),
+            "awaiting_human_verification": True,
         }
 
-    def _human_verification_node(self, state: AO02AgentState) -> AO02AgentState:
+    async def _human_verification_node(self, state: AO02AgentState) -> AO02AgentState:
         envelope: HeapIncidentEnvelope = self.heap.get_envelope_for_agent(
             state["active_token_id"]
         )
@@ -217,14 +187,15 @@ class AO02Workflow:
             actor="HumanOperatorGate",
             summary="Human-in-the-loop verification gate reached.",
         )
-        _broadcast_transition(
+
+        await broadcast_token_transition(
             token_id=state["active_token_id"],
             phase=PipelinePhase.RESOLVED.value,
             hop_count=envelope.token.hop_count,
             summary="Human-in-the-loop verification gate reached.",
-            awaiting_human=False,
         )
-        asyncio.run(broadcast_queue_update())
+        await broadcast_queue_update()
+
         return {
             **state,
             "current_phase": PipelinePhase.RESOLVED.value,
@@ -255,9 +226,7 @@ class AO02Workflow:
         workflow.add_node("human_verification", self._human_verification_node)
 
         workflow.set_entry_point("monitoring")
-        workflow.add_conditional_edges(
-            "monitoring", self._route_after_monitoring
-        )
+        workflow.add_conditional_edges("monitoring", self._route_after_monitoring)
         workflow.add_edge("incident_reporting", "rca_agent")
         workflow.add_edge("rca_agent", "remediation_agent")
         workflow.add_edge("remediation_agent", "risk_analysis")

@@ -316,3 +316,58 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 
 ### Next Pending Steps
 - All 4 steps complete. Ready for production hardening: auth/RBAC, persistent database (SQLAlchemy models already defined), WebSocket reconnection resilience, chart interactivity, and operator decision write-back to heap.
+
+## Entry 007 — 2026-10-28 | Session: pipeline-repair-and-contract-fix
+
+### Summary of Changes
+- Repaired the runtime end to end. `/agents/run` failed for every token with `asyncio.run() cannot be called from a running event loop`; LangGraph nodes are now async and await agents plus WebSocket broadcasts on the API event loop.
+- Fixed API/frontend contract drift: backend snake_case token payloads are normalised once in `frontend/src/services/api.ts` into camelCase DTOs. This removes the `NaN%` values, blank rack/tenant labels, and the queue-page crash.
+- `/queue/snapshot` and WebSocket payloads are now enriched with heap telemetry (utilization, safety margin, lead time, confidence, interval, regime flags, risk/gate) through new `backend/app/api/serializers.py`.
+- Cold start fixed: telemetry generates lazily on first series access, so scanning no longer depends on a prior `/telemetry/generate` call.
+- Duplicate-scan bug fixed: the envelope write moved after the queue dedupe gate, so repeated scans no longer create orphan heap records (previously 53 -> 106 after one rescan).
+- HITL flow completed: `/agents/run` leaves the token at `06_HUMAN_VERIFICATION`, `/agents/pending` lists it, `/agents/decision` records approve/reject/defer with an audit entry and phase transition. Failed runs requeue the token via `PriorityTokenQueue.requeue`.
+- New endpoints: `/facility/overview` (real rack power/network/tenant utilization plus CRAC temperature and derived RPM), `/agents/pending`, `/agents/decision`, `/agents/history` (terminal phases only).
+- Frontend rebuilt against the DTO contract: facility-driven isometric map, forecast page with least-squares 14-day projection, 95% confidence cone and safety-margin threshold, queue tabs (queued/pending/history), and a full HITL console (stepper, evidence, RCA, remediation, risk, decision, audit).
+- Store fixes: no telemetry regeneration on mount, WebSocket plus 15s polling fallback, envelope cache invalidation on phase change, and auto-follow of the incident awaiting verification without hijacking an explicit operator selection.
+- Layout fixes: desktop header offset past the fixed sidebar, mobile drawer, horizontally scrollable rack floor, error boundary, and dismissible error banner.
+- Removed Python `__init__` placeholders from `frontend/src/services` and `frontend/src/hooks`.
+
+### Touched Files
+- `backend/app/core/ao02_state_and_graph.py` (REJECTED phase, requeue, all_envelopes)
+- `backend/app/core/telemetry_generator.py` (lazy generation, series index, latest_point)
+- `backend/app/services/ingestion.py` (dedupe before heap write)
+- `backend/app/services/streaming.py` (serialized broadcasts)
+- `backend/app/api/serializers.py` (new)
+- `backend/app/api/routers/agents.py` (new)
+- `backend/app/api/routers/facility.py` (new)
+- `backend/app/api/routers/queue.py`, `stream.py` (serializers)
+- `backend/app/api/deps.py` (workflow singleton)
+- `backend/app/workflow.py` (async nodes)
+- `backend/app/main.py` (router mounting, health)
+- `backend/app/agents/monitoring_agent.py` (Optional import)
+- `frontend/src/types/ao02.ts` (full DTO contract)
+- `frontend/src/services/api.ts`, `websocket.ts`
+- `frontend/src/store/ao02Store.tsx`
+- `frontend/src/hooks/*` (rewritten; `useFacility`, `useSelectedIncident` added)
+- `frontend/src/lib/format.ts`, `resourceSpec.ts` (new)
+- `frontend/src/components/**` (all four views, layout, common)
+- `frontend/src/App.tsx`
+- `frontend/src/vite-env.d.ts` (new)
+- `memory.md` (this entry)
+
+### Verification
+- `npx tsc --noEmit` and `npm run build` pass (51 modules, ~219 kB JS).
+- API flow: fresh boot -> scan mints 53 -> repeat scan mints 0 with heap stable at 53 -> run reaches 06 with 5 hops -> pending 1 -> heap envelope has RCA, 1 remediation option, risk 0.956, 6 audit entries -> approve resolves to 07.
+- Tenant isolation: T1 requesting a T2 envelope returns 403.
+- Browser: all four views render real values with zero console errors and no `NaN`; queue run -> HITL -> approve works; a history row reopens the resolved incident with the approval note.
+
+### Architectural Impact
+- The data contract boundary is explicit: backend stays snake_case, frontend consumes camelCase DTOs from one normaliser. The palette is already tokenised, so reskins need no backend or data-logic changes.
+- Pipeline ownership clarified: the API owns dequeue/requeue, the graph owns phase progression, the heap owns evidence and audit, and the decision endpoint owns operator sign-off. The human gate is observable via the pending list instead of dropping tokens.
+- Telemetry remains strictly read-only; every remediation option is simulated and audit-linked to `raw_series_sha256`.
+
+### Next Pending Steps
+- Persist heap/queue state (SQLAlchemy models exist) so verification survives restarts and audit history is durable.
+- Add auth/RBAC for operator identity instead of the demo `operator@facility` default.
+- Harden WebSocket fan-out across multiple workers (Redis pub/sub) before horizontal scaling.
+- Add backend tests for dedupe/idempotent scans, requeue-on-error, tenant isolation, and decision transitions.

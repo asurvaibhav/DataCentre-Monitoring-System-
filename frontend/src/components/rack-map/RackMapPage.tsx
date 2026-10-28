@@ -1,95 +1,220 @@
-// frontend/src/components/rack-map/RackMapPage.tsx
-// Page that assembles rack map from store data.
+// Facility overview page: live rack/cooling telemetry plus active incidents.
 
 import { useAO02Store } from "@/store/ao02Store";
+import { useFacility } from "@/hooks/useFacility";
+import { fmtPct, phaseLabel } from "@/lib/format";
 import { IsometricRackMap } from "./IsometricRackMap";
 import { MetricCard } from "@/components/common/MetricCard";
 import { SeverityBadge } from "@/components/common/SeverityBadge";
 
-const RACK_IDS = ["R-01", "R-02", "R-03", "R-04", "R-05", "R-06", "R-07", "R-08", "R-09", "R-10", "R-11", "R-12"];
+interface RackMapPageProps {
+  onNavigate?: (page: "rack-map" | "queue" | "forecast" | "hitl") => void;
+}
 
-export function RackMapPage() {
-  const { state } = useAO02Store();
-  const { tokens } = state;
+export function RackMapPage({ onNavigate }: RackMapPageProps) {
+  const { facility, loading } = useFacility();
+  const { state, actions } = useAO02Store();
 
-  // Build spatial nodes from tokens (Step 4 baseline)
-  const racks: any[] = RACK_IDS.map((rackId) => {
-    const rackTokens = tokens.filter((t) => t.rackId === rackId);
-    const critical = rackTokens.some((t) => t.utilizationPct >= 90);
-    const warning = rackTokens.some((t) => t.utilizationPct >= 75);
-    const status = critical ? "CRITICAL" : warning ? "WARNING" : "HEALTHY";
-    const active = rackTokens[0];
-    return {
-      rackId,
-      gridPosition: { row: 0, col: 0 },
-      status,
-      activeBadge: active?.resourceType,
-      powerLoadKw: critical ? 78 : warning ? 55 : 40,
-      maxPowerKw: 80,
-      activeTokenIds: rackTokens.map((t) => t.tokenId),
-    };
-  });
-
-  const cooling: any[] = [
-    {
-      unitId: "CRAC Unit A (North)",
-      supplyTempCelsius: 13.2,
-      fanSpeedRpm: 1422,
-      status: "HEALTHY" as const,
-    },
-    {
-      unitId: "CRAC Unit B (South)",
-      supplyTempCelsius: 15.1,
-      fanSpeedRpm: 1380,
-      status: "WARNING" as const,
-    },
-  ];
-
-  const avgUtil = tokens.length > 0 ? tokens.reduce((a, b) => a + b.utilizationPct, 0) / tokens.length : 0;
-  const criticalCount = tokens.filter((t) => t.utilizationPct >= 90).length;
-  const warningCount = tokens.filter((t) => t.utilizationPct >= 75 && t.utilizationPct < 90).length;
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row lg:items-start gap-6">
-        <div className="flex-1">
-          <h2 className="text-lg font-semibold text-white mb-4">Spatial Data Center Floor</h2>
-          <IsometricRackMap racks={racks} cooling={cooling} />
-          <div className="mt-4 flex flex-wrap gap-4 text-xs text-gray-400">
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-brand-critical" />
-              Critical: {criticalCount}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-brand-warn" />
-              Warning: {warningCount}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-brand-ok" />
-              Healthy
-            </span>
-          </div>
-        </div>
-        <div className="w-full lg:w-64 space-y-4">
-          <MetricCard title="Avg Utilization" value={`${avgUtil.toFixed(0)}%`} subtext="Across active tokens" />
-          <MetricCard title="Critical Alerts" value={criticalCount} subtext="Immediate attention" trend="up" />
-          <MetricCard title="Warnings" value={warningCount} subtext="Monitor closely" />
-          <div className="p-4 rounded-xl border border-brand-surface bg-brand-surface/50">
-            <h3 className="text-xs font-medium text-gray-400 uppercase mb-3">Active Bottlenecks</h3>
-            {tokens.slice(0, 6).map((t) => (
-              <div key={t.tokenId} className="flex items-center justify-between gap-2 mb-2">
-                <span className="text-sm text-gray-300 truncate">
-                  {t.rackId} • {t.resourceType} • {t.tenantId}
-                </span>
-                <SeverityBadge
-                  status={t.utilizationPct >= 90 ? "CRITICAL" : t.utilizationPct >= 75 ? "WARNING" : "HEALTHY"}
-                />
-              </div>
-            ))}
-            {tokens.length === 0 && <p className="text-xs text-gray-500 italic">No active tokens</p>}
-          </div>
+  if (loading) {
+    return (
+      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+        <div className="h-[520px] animate-pulse rounded-xl border border-brand-surface bg-brand-surface/30" />
+        <div className="space-y-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-24 animate-pulse rounded-xl border border-brand-surface bg-brand-surface/30"
+            />
+          ))}
         </div>
       </div>
+    );
+  }
+
+  if (!facility) {
+    return (
+      <div className="rounded-xl border border-brand-surface bg-brand-surface/30 p-10 text-center">
+        <p className="text-sm text-slate-400">Facility telemetry is unavailable.</p>
+        <button
+          type="button"
+          onClick={() => actions.refreshAll()}
+          className="mt-3 text-xs font-medium text-brand-accent underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const rackStatus = facility.racks.reduce(
+    (acc, rack) => {
+      acc[rack.status] += 1;
+      return acc;
+    },
+    { HEALTHY: 0, WARNING: 0, CRITICAL: 0 } as Record<string, number>,
+  );
+
+  const openIncidents =
+    facility.racks.reduce((sum, rack) => sum + rack.incidentCount, 0) +
+    facility.cooling.reduce((sum, unit) => sum + unit.incidentCount, 0);
+  const avgPower =
+    facility.racks.reduce((sum, rack) => sum + rack.powerPct, 0) /
+    Math.max(facility.racks.length, 1);
+  const hottestCooling = facility.cooling.reduce(
+    (worst, unit) => (unit.utilizationPct > worst ? unit.utilizationPct : worst),
+    0,
+  );
+
+  const incidents = facility.racks
+    .flatMap((rack) => rack.incidents.map((incident) => ({ ...incident, rackId: rack.rackId })))
+    .slice(0, 10);
+
+  const tokenFor = (tokenId: string) =>
+    state.tokens.find((token) => token.tokenId === tokenId) ??
+    state.pending.find((token) => token.tokenId === tokenId) ??
+    null;
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1fr_300px]">
+      <section className="space-y-4">
+        <div className="rounded-xl border border-brand-surface bg-brand-surface/20 p-3">
+          <IsometricRackMap
+            racks={facility.racks}
+            cooling={facility.cooling}
+            onSelectToken={(tokenId) => {
+              actions.selectToken(tokenId);
+              onNavigate?.("hitl");
+            }}
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-brand-critical" />
+              Critical {rackStatus.CRITICAL}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-brand-warn" />
+              Warning {rackStatus.WARNING}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-brand-ok" />
+              Healthy {rackStatus.HEALTHY}
+            </span>
+            <span className="ml-auto">Click a rack to open its incident</span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-brand-surface bg-brand-surface/20">
+          <div className="flex items-center justify-between border-b border-brand-surface px-4 py-3">
+            <h2 className="text-sm font-semibold text-white">Active incidents</h2>
+            <button
+              type="button"
+              onClick={() => onNavigate?.("queue")}
+              className="text-xs font-medium text-brand-accent hover:underline"
+            >
+              View queue →
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="text-slate-500">
+                <tr className="border-b border-brand-surface/60">
+                  <th className="px-4 py-2 font-medium">Rack</th>
+                  <th className="px-4 py-2 font-medium">Resource</th>
+                  <th className="px-4 py-2 font-medium">Tenant</th>
+                  <th className="px-4 py-2 font-medium">Utilization</th>
+                  <th className="px-4 py-2 font-medium">Phase</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-brand-surface/40">
+                {incidents.map((incident) => {
+                  const token = tokenFor(incident.tokenId);
+                  return (
+                    <tr
+                      key={incident.tokenId}
+                      className="cursor-pointer hover:bg-brand-surface/40"
+                      onClick={() => {
+                        actions.selectToken(incident.tokenId);
+                        onNavigate?.("hitl");
+                      }}
+                    >
+                      <td className="px-4 py-2 font-medium text-slate-200">{incident.rackId}</td>
+                      <td className="px-4 py-2 text-slate-300">
+                        {incident.resourceType.replace(/_/g, " ")}
+                      </td>
+                      <td className="px-4 py-2 text-slate-400">{incident.tenantId}</td>
+                      <td className="px-4 py-2 tabular-nums text-slate-300">
+                        {fmtPct(token?.utilizationPct ?? 0)}
+                      </td>
+                      <td className="px-4 py-2">
+                        <SeverityBadge
+                          status={
+                            token && token.utilizationPct >= 95
+                              ? "CRITICAL"
+                              : token && token.utilizationPct >= 85
+                                ? "WARNING"
+                                : "HEALTHY"
+                          }
+                          label={phaseLabel(incident.phase)}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+                {incidents.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                      No open incidents. The facility is within safety margins.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <aside className="space-y-3">
+        <MetricCard
+          title="Open incidents"
+          value={openIncidents}
+          subtext="Tokens in queue or awaiting HITL"
+          tone={openIncidents > 20 ? "critical" : openIncidents > 0 ? "warn" : "ok"}
+        />
+        <MetricCard
+          title="Avg power utilization"
+          value={fmtPct(avgPower, 0)}
+          subtext="Facility-wide rack draw"
+          tone={avgPower >= 90 ? "critical" : avgPower >= 80 ? "warn" : "ok"}
+        />
+        <MetricCard
+          title="Cooling headroom"
+          value={fmtPct(100 - hottestCooling, 0)}
+          subtext="Worst CRAC supply temperature"
+          tone={hottestCooling >= 90 ? "critical" : hottestCooling >= 80 ? "warn" : "ok"}
+        />
+        <MetricCard
+          title="Facility coverage"
+          value={`${facility.racks.length} racks · ${facility.cooling.length} CRAC`}
+          subtext="Read-only telemetry"
+          tone="accent"
+        />
+
+        <div className="rounded-xl border border-brand-surface bg-brand-surface/30 p-4">
+          <h3 className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+            Cooling units
+          </h3>
+          <ul className="mt-2 space-y-2 text-xs">
+            {facility.cooling.map((unit) => (
+              <li key={unit.unitId} className="flex items-center justify-between gap-2">
+                <span className="truncate text-slate-300">{unit.label}</span>
+                <span className="shrink-0 tabular-nums text-slate-400">
+                  {unit.supplyTempCelsius.toFixed(1)}°C · {unit.fanSpeedRpm} RPM
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
     </div>
   );
 }

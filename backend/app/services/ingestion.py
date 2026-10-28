@@ -219,6 +219,13 @@ class IngestionService:
             resource_type=resource_type,
         )
 
+        # Enqueue first: `enqueue` is also the duplicate gate. Writing the
+        # envelope before this check would leave orphan incidents in the heap
+        # every time the same resource is scanned again.
+        enqueued = self.queue.enqueue(token)
+        if not enqueued:
+            return None  # Duplicate token for same rack/tenant/resource
+
         envelope = HeapIncidentEnvelope(
             token=token,
             telemetry=telemetry,
@@ -232,10 +239,6 @@ class IngestionService:
                 f"utilization {current:.1f}%, lead time {forecast.lead_time_weeks:.1f} weeks."
             ),
         )
-
-        enqueued = self.queue.enqueue(token)
-        if not enqueued:
-            return None  # Duplicate token for same rack/tenant/resource
 
         return token
 

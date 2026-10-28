@@ -1,67 +1,129 @@
-// frontend/src/components/layout/Sidebar.tsx
-// Left navigation sidebar.
-
-import { useState } from "react";
+// Left navigation. Fixed on desktop, slide-over drawer on mobile.
 
 interface SidebarProps {
   active: string;
+  open: boolean;
+  queuedCount: number;
+  pendingCount: number;
   onSelect: (key: string) => void;
+  onClose: () => void;
 }
 
-export function Sidebar({ active, onSelect }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+const NAV_ITEMS = [
+  {
+    key: "rack-map",
+    label: "Rack Map",
+    path: "M3 10.5 12 4l9 6.5M5 9.5V20h14V9.5",
+  },
+  {
+    key: "queue",
+    label: "Priority Queue",
+    path: "M4 6h16M4 12h16M4 18h10",
+  },
+  {
+    key: "forecast",
+    label: "Forecasting",
+    path: "M4 19V5m0 14h16M7 15l4-5 3 3 4-6",
+  },
+  {
+    key: "hitl",
+    label: "HITL Console",
+    path: "M9 12l2 2 4-4m5 2a9 9 0 11-18 0 9 9 0 0118 0z",
+  },
+] as const;
 
-  const navItems = [
-    { key: "rack-map", label: "Rack Map", icon: "M3 12l2-2m0 0l7-7 7 7M5 13v10a2 2 0 002 2h10a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6z" },
-    { key: "queue", label: "Priority Queue", icon: "M3 9h18M3 9v9a4 4 0 004 4h12a4 4 0 004-4V9z" },
-    { key: "forecast", label: "Forecasting", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
-    { key: "hitl", label: "HITL Console", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
-  ];
-
+export function Sidebar({
+  active,
+  open,
+  queuedCount,
+  pendingCount,
+  onSelect,
+  onClose,
+}: SidebarProps) {
   return (
-    <aside
-      className={`fixed inset-y-0 left-0 z-20 w-64 border-r border-brand-surface bg-brand-dark transform transition-transform duration-300 ${
-        collapsed ? "-translate-x-full" : ""
-      }`}
-    >
-      <div className="flex h-16 items-center justify-between px-4 border-b border-brand-surface">
+    <>
+      {open && (
         <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="text-gray-400 hover:text-white"
-          aria-label="Toggle sidebar"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
-        <span className="font-semibold text-brand-accent hidden md:block">AO-02</span>
-      </div>
-      <nav className="mt-6 px-3 space-y-1">
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            onClick={() => onSelect(item.key)}
-            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              active === item.key
-                ? "bg-brand-accent/10 text-brand-accent"
-                : "text-gray-400 hover:text-white hover:bg-brand-surface/30"
-            }`}
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              dangerouslySetInnerHTML={{ __html: item.icon }}
-            />
-            {item.label}
-          </button>
-        ))}
-      </nav>
-      <div className="mt-auto p-4 border-t border-brand-surface">
-        <div className="text-xs text-gray-500">Branch: dev/ao02-core</div>
-        <div className="text-xs text-gray-500 truncate">Step 4 — Frontend</div>
-      </div>
-    </aside>
+          type="button"
+          aria-label="Close navigation"
+          onClick={onClose}
+          className="fixed inset-0 z-30 bg-black/60 lg:hidden"
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-brand-surface bg-brand-dark transition-transform duration-200 ${
+          open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
+        <div className="flex h-16 items-center gap-3 border-b border-brand-surface px-5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-accent/15 text-sm font-bold text-brand-accent">
+            AO
+          </div>
+          <div>
+            <p className="text-sm font-semibold leading-tight text-white">AO-02</p>
+            <p className="text-[10px] uppercase tracking-wider text-slate-500">
+              Capacity Observatory
+            </p>
+          </div>
+        </div>
+
+        <nav className="mt-4 flex-1 space-y-1 px-3">
+          {NAV_ITEMS.map((item) => {
+            const isActive = active === item.key;
+            const badge =
+              item.key === "queue"
+                ? queuedCount
+                : item.key === "hitl"
+                  ? pendingCount
+                  : null;
+
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => {
+                  onSelect(item.key);
+                  onClose();
+                }}
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-brand-accent/10 text-brand-accent"
+                    : "text-slate-400 hover:bg-brand-surface/40 hover:text-white"
+                }`}
+              >
+                <svg
+                  className="h-5 w-5 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d={item.path} />
+                </svg>
+                <span className="flex-1 text-left">{item.label}</span>
+                {badge !== null && badge > 0 && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums ${
+                      item.key === "hitl"
+                        ? "bg-brand-warn/20 text-brand-warn"
+                        : "bg-brand-surface text-slate-300"
+                    }`}
+                  >
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="border-t border-brand-surface p-4 text-[11px] leading-relaxed text-slate-500">
+          <p className="font-medium text-slate-400">dev/ao02-core</p>
+          <p>Read-only telemetry · tenant isolated</p>
+        </div>
+      </aside>
+    </>
   );
 }
