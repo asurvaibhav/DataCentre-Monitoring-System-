@@ -424,3 +424,38 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 - Add auth/RBAC for operator identity and harden WebSocket fan-out for multiple workers.
 - Add backend regression tests for dedupe, requeue-on-error, tenant isolation, and decision transitions.
 - Optional polish: deep-link a HITL incident to its forecast series, add visual regression screenshots, and verify the 1440px desktop composition on hardware.
+
+## Entry 009 — 2026-10-28 | Session: gemini-live-run
+
+### Summary of Changes
+- Replaced the deprecated `google-generativeai==0.8.3` dependency with `google-genai==2.33.0`; raised the Pydantic pin to `2.13.4` to match the new SDK requirement.
+- Migrated `GeminiProvider` to the current async `google.genai` client with native Pydantic `response_schema` support, structured-output parsing, a 120-second request timeout, and five-attempt exponential retry for HTTP 429/500/502/503/504.
+- Added `GEMINI_MODEL` configuration with default `gemini-3.5-flash`. The legacy `gemini-1.5-flash` returns 404, `gemini-2.5-flash` is unavailable to new accounts, and `gemini-3.8-flash` timed out during validation; `gemini-3.5-flash` is the verified working model.
+- Restarted the backend with `--env-file .env`; `/health` now reports `GeminiProvider` instead of `_MockProvider`.
+- Rescanned resources, minting 53 incidents, and ran the highest-priority token `T-37ECCE` (POWER, R-05, FACILITY) through the real Gemini pipeline.
+- The run reached `06_HUMAN_VERIFICATION` at 5/8 hops with a Gemini RCA, one read-only remediation option, a risk score of 0.96, and `REQUIRE_HUMAN_APPROVAL`. No operator decision was recorded, so the token remains pending at the human gate.
+- The six audit entries all carry the same `raw_series_sha256` telemetry link; T1 and T2 requests for the FACILITY envelope returned 403.
+
+### Touched Files
+- `memory.md` (this entry)
+- `backend/app/core/llm_provider.py`
+- `backend/requirements.txt`
+- `backend/.env.example`
+- `backend/.env` (local only, gitignored; never committed)
+
+### Verification
+- Actual `RCADiagnosis` Pydantic schema completed successfully through the new SDK.
+- `/health`: `GeminiProvider`; `/queue/snapshot`: 52 remaining queued; `/agents/pending`: 1 (`T-37ECCE`).
+- Envelope: RCA confidence 0.82, 1 remediation option with `mutates_live_facility_controls: false`, risk 0.96, all six audit phases linked to the telemetry hash.
+- Browser: operator gate shows the paused incident, evidence, RCA, remediation, risk gate, and six-entry audit trail; no console errors after reload.
+- Tenant isolation: FACILITY envelope access 200; T1/T2 access 403 with explicit breach messages.
+
+### Architectural Impact
+- The live model boundary now uses a maintained SDK and structured Pydantic outputs; transient Gemini demand spikes are retried instead of immediately requeueing the token.
+- Model selection is environment-configurable, so a future Gemini model change does not require another provider rewrite.
+- Advisory-only remediation, tenant isolation, the 8-hop guard, telemetry-linked immutable audit, and the hard human verification gate remain unchanged.
+
+### Next Pending Steps
+- Rotate the demo Gemini key because it was exposed in chat, and keep only the replacement in `backend/.env`.
+- Persist heap/queue state so live incidents and audit history survive backend restarts.
+- Add backend regression tests for retry behavior, structured-output parsing, tenant isolation, and decision transitions.

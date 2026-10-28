@@ -144,16 +144,52 @@ def _heuristic_instance(schema: Type[BaseModel], prompt: str) -> BaseModel:
 class GeminiProvider(LLMProvider):
     """Google Gemini API provider with structured JSON output."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash") -> None:
+    def __init__(self, api_key: str, model_name: str = "gemini-3.5-flash") -> None:
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types
         except ImportError as exc:  # pragma: no cover - dependency missing
             raise ImportError(
-                "google-generativeai is required for the Gemini provider. "
-                "Install it with `pip install google-generativeai`."
+                "google-genai is required for the Gemini provider. "
+                "Install it with `pip install google-genai`."
             ) from exc
-        genai.configure(api_key=api_key)
-        self._model = genai.GenerativeModel(model_name)
+
+        self._types = types
+        self._model_name = model_name
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=120_000,
+                retry_options=types.HttpRetryOptions(
+                    attempts=5,
+                    initial_delay=2.0,
+                    max_delay=20.0,
+                    exp_base=2.0,
+                    jitter=1.0,
+                    http_status_codes=[429, 500, 502, 503, 504],
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _parse_response(response: Any, schema: Type[BaseModel]) -> BaseModel:
+        parsed = getattr(response, "parsed", None)
+        if isinstance(parsed, schema):
+            return parsed
+        if isinstance(parsed, dict):
+            return schema(**parsed)
+        if parsed is not None:
+            return schema.model_validate(parsed)
+
+        text = (getattr(response, "text", None) or "{}").strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        return schema(**json.loads(text))
 
     async def generate_structured(
         self,
@@ -171,17 +207,18 @@ class GeminiProvider(LLMProvider):
             f"{json.dumps(schema_json, indent=2)}"
         )
 
-        from google.generativeai import GenerationConfig
-
-        config = GenerationConfig(
+        config = self._types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=schema_json,
+            response_schema=schema,
+            system_instruction=system_prompt,
             temperature=temperature,
         )
-        response = self._model.generate_content(full_prompt, generation_config=config)
-        text = response.text or "{}"
-        data = json.loads(text)
-        return schema(**data)
+        response = await self._client.aio.models.generate_content(
+            model=self._model_name,
+            contents=full_prompt,
+            config=config,
+        )
+        return self._parse_response(response, schema)
 
 
 class OpenAIProvider(LLMProvider):
@@ -236,7 +273,8 @@ def get_llm_provider() -> LLMProvider:
     if provider_name == "gemini":
         api_key = os.getenv("GEMINI_API_KEY")
         if api_key:
-            return GeminiProvider(api_key)
+            model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+            return GeminiProvider(api_key, model_name)
     elif provider_name == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
