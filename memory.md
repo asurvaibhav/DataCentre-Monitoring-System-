@@ -53,6 +53,49 @@ Cross-AI chronological engineering log for Team XOR — Problem Statement AO-02:
 - Frontend is fully decoupled from backend via `src/types/ao02.ts`; Tailwind design tokens live in tailwind.config.js so future brand palette reskins need zero data-logic changes.
 
 ### Next Pending Steps
-- Step 2: Build synthetic 12-month telemetry generator, tenant isolation middleware, Priority Token Queue wiring, and Shared Heap state manager.
 - Step 3: Implement Forecasting Engine (time-to-exhaustion + regime change detection + transient spike filtering) and wire 3 core agents + Risk & Verification gates in LangGraph with Gemini/OpenAI structured outputs.
 - Step 4: Expose FastAPI REST + WebSocket endpoints and build decoupled React frontend (Isometric Rack Map, Forecasting Charts, Token Queue Visualizer, Human-in-the-Loop Console).
+
+## Entry 003 — 2026-10-28 | Session: step2-telemetry-queue-heap
+
+### Summary of Changes
+- Step 2 complete: synthetic 12-month telemetry generator, tenant isolation guard, Priority Token Queue wiring, Shared Context Heap state manager, and FastAPI REST layer.
+- `backend/requirements.txt`: added `numpy==1.26.4` and `sqlalchemy==2.0.29` for telemetry math and SQLite persistence.
+- `backend/app/database.py`: SQLAlchemy engine/session/Base for file-based SQLite (`ao02.db`) plus `get_db()` dependency.
+- `backend/app/models.py`: ORM models `TelemetryPointORM` and `AuditRecordORM` for persistent telemetry store and immutable audit trail.
+- `backend/app/core/telemetry_generator.py`: `TelemetryGenerator` (seedable, deterministic) producing hourly 12-month series for Power, Network, Storage, VM Compute, Thermal/Cooling, and Software Licenses across R-01..R-12, CRAC-A/B, and T1-T3. Includes daily/weekly seasonality, linear exhaustion trends, regime changes (R-04/T1 storage onboarding step), transient spikes (R-07 power, CRAC-B thermal), and resources trending toward exhaustion by month 12. Exposes `get_series`, `get_latest_window`, `to_dict`.
+- `backend/app/core/tenant_guard.py`: `TenantGuard` wrapping `SharedContextHeap.get_tenant_isolated_view` into FastAPI HTTPExceptions (403 on tenant-isolation breach, 404 on missing token); `require_tenant_header` and `is_facility_operator` header helpers.
+- `backend/app/services/ingestion.py`: `IngestionService` — loads telemetry, computes SHA-256 of raw series for audit, runs linear-regression time-to-exhaustion forecast with confidence intervals, detects transient spikes and regime changes, evaluates against safety margins, mints `IncidentToken` with `compute_priority_number`, writes `HeapIncidentEnvelope` to Shared Heap, enqueues into Priority Token Queue. `scan_all_resources()` evaluates every rack/tenant/resource combination.
+- `backend/app/api/deps.py`: module-level singletons for heap, queue, and ingestion with getter dependencies.
+- `backend/app/api/routers/telemetry.py`: POST /telemetry/generate, GET /telemetry/points (filtered listing), GET /telemetry/window (latest series window).
+- `backend/app/api/routers/queue.py`: GET /queue/snapshot (ordered tokens for visualizer), POST /queue/enqueue (rejects duplicates).
+- `backend/app/api/routers/heap.py`: GET /heap/{token_id} (tenant-isolated view via X-Tenant-Id / X-Facility-Operator headers), GET /heap/{token_id}/envelope (full envelope).
+- `backend/app/api/routers/ingest.py`: POST /ingest/scan (runs full resource scan and minting).
+- `backend/app/main.py`: mounts all routers, builds LangGraph workflow blueprint from heap singleton, exposes /health, /, and endpoint index.
+
+### Touched Files
+- `memory.md` (this entry)
+- `backend/requirements.txt` (edited)
+- `backend/app/database.py` (new)
+- `backend/app/models.py` (new)
+- `backend/app/core/telemetry_generator.py` (new)
+- `backend/app/core/tenant_guard.py` (new)
+- `backend/app/services/ingestion.py` (new)
+- `backend/app/api/deps.py` (new)
+- `backend/app/api/__init__.py` (new)
+- `backend/app/api/routers/__init__.py` (new)
+- `backend/app/api/routers/telemetry.py` (new)
+- `backend/app/api/routers/queue.py` (new)
+- `backend/app/api/routers/heap.py` (new)
+- `backend/app/api/routers/ingest.py` (new)
+- `backend/app/main.py` (rewrote to mount routers + workflow)
+
+### Architectural Impact
+- Read-only telemetry pipeline is operational: generation → windowing → forecast → threshold breach → token mint → heap write → queue enqueue.
+- Tenant isolation enforced at the API layer via `TenantGuard` + `X-Tenant-Id`/`X-Facility-Operator` headers; facility operators bypass isolation, tenants cannot read each other's telemetry.
+- Every minted token gets an immutable audit entry (telemetry SHA-256, actor, phase, summary) in the Shared Heap.
+- LangGraph 6-phase workflow blueprint is compiled and ready for agent node LLM wiring in Step 3.
+
+### Next Pending Steps
+- Step 3: Implement Forecasting Engine enhancements and wire 3 core agents (Resource Monitoring, RCA, Remediation) + Risk & Verification gates in LangGraph with Gemini/OpenAI structured outputs.
+- Step 4: Expose FastAPI WebSocket endpoint for live agent graph streaming and build decoupled React frontend.
