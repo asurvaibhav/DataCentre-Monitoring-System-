@@ -21,25 +21,48 @@ from app.services.streaming import broadcast_queue_update, broadcast_token_trans
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
+class RunPipelineRequest(BaseModel):
+    token_id: Optional[str] = None
+
+
 class DecisionRequest(BaseModel):
     token_id: str
-    decision: Literal["approve", "reject", "defer"]
+    decision: Literal["approve", "reject", "defer", "resolve"]
     operator: str = Field(default="operator@facility", min_length=1, max_length=80)
     notes: Optional[str] = Field(default=None, max_length=1000)
 
 
 @router.post("/run")
 async def run_agent_pipeline(
+    request: Optional[RunPipelineRequest] = None,
     queue=Depends(get_queue),
     heap=Depends(get_heap),
     workflow=Depends(get_workflow),
 ) -> Dict[str, Any]:
-    """Dequeue the highest-priority token and run the 6-phase pipeline.
+    """Run the 6-phase agent pipeline on a specific token or the highest-priority token.
 
     Execution pauses before the human-verification gate; the token is then
     exposed by `/agents/pending` until an operator records a decision.
     """
-    token = queue.dequeue()
+    target_token_id = request.token_id if request else None
+
+    was_in_queue = False
+    if target_token_id:
+        # Check queue first and remove it so it does not get processed twice
+        token = queue.remove(target_token_id)
+        if token is not None:
+            was_in_queue = True
+        else:
+            try:
+                envelope = heap.get_envelope_for_agent(target_token_id)
+                token = envelope.token
+            except KeyError:
+                raise HTTPException(status_code=404, detail=f"Token {target_token_id} not found")
+    else:
+        token = queue.dequeue()
+        if token is not None:
+            was_in_queue = True
+
     if token is None:
         return {"status": "idle", "message": "No tokens in queue"}
 
@@ -55,13 +78,14 @@ async def run_agent_pipeline(
     try:
         result = await workflow.ainvoke(initial_state)
     except Exception as exc:  # noqa: BLE001 - surface graph errors to the caller
-        queue.requeue(token)
+        if was_in_queue:
+            queue.enqueue(token)
         await broadcast_queue_update()
         return {
             "status": "error",
             "token_id": token.token_id,
             "error": str(exc),
-            "requeued": True,
+            "requeued": was_in_queue,
         }
 
     await broadcast_queue_update()
@@ -97,35 +121,33 @@ async def pending_verification(heap=Depends(get_heap)) -> Dict[str, Any]:
 async def record_decision(
     request: DecisionRequest,
     heap=Depends(get_heap),
+    queue=Depends(get_queue),
 ) -> Dict[str, Any]:
-    """Record a human-in-the-loop decision in the immutable audit trail."""
+    """Record a human-in-the-loop decision in the immutable audit trail.
+    
+    Can be invoked at any time by a human operator for any incident.
+    """
     try:
         envelope = heap.get_envelope_for_agent(request.token_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    if envelope.token.current_phase != PipelinePhase.HUMAN_VERIFICATION:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Token {request.token_id} is in phase "
-                f"{envelope.token.current_phase.value}, not awaiting human verification."
-            ),
-        )
+    # Remove token from queue if it is currently queued
+    queue.remove(request.token_id)
 
     notes = request.notes or ""
-    if request.decision == "approve":
+    if request.decision in ("approve", "resolve"):
         envelope.human_approved = True
         envelope.token.current_phase = PipelinePhase.RESOLVED
         if envelope.risk_evaluation is not None:
             envelope.risk_evaluation.gate_decision = GateDecision.APPROVED_BY_OPERATOR
-        summary = f"Operator {request.operator} approved advisory. {notes}".strip()
+        summary = f"Operator {request.operator} resolved incident. {notes}".strip()
     elif request.decision == "reject":
         envelope.human_approved = False
         envelope.token.current_phase = PipelinePhase.REJECTED
         if envelope.risk_evaluation is not None:
             envelope.risk_evaluation.gate_decision = GateDecision.REJECTED_BY_OPERATOR
-        summary = f"Operator {request.operator} rejected advisory. {notes}".strip()
+        summary = f"Operator {request.operator} rejected incident. {notes}".strip()
     else:
         envelope.operator_notes = notes
         summary = f"Operator {request.operator} deferred decision. {notes}".strip()
@@ -152,6 +174,7 @@ async def record_decision(
         "token": serialize_token(envelope.token, heap),
         "envelope": serialize_envelope(envelope),
     }
+
 
 
 @router.get("/history")

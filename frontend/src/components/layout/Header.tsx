@@ -79,7 +79,6 @@ export function Header({
         <div className="nav-status" role="status">
           {running && <span className="tag tag-ok">agents running</span>}
           <span className={`connection-dot ${connected ? "connected" : ""}`} />
-          {connected ? "API connected" : "Polling API"}
           <span className="sep" aria-hidden="true">
             /
           </span>

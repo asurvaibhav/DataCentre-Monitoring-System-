@@ -31,6 +31,7 @@ def serialize_token(
     payload: Dict[str, Any] = {
         "token_id": token.token_id,
         "priority_number": token.priority_number,
+        "priority_reason": token.priority_reason,
         "rack_id": token.rack_id,
         "tenant_id": token.tenant_id,
         "resource_type": token.resource_type.value,

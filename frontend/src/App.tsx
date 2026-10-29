@@ -1,6 +1,7 @@
 // AO-02 frontend shell. All backend access lives in src/services + src/store;
 // these components are presentational consumers of the headless store.
 
+
 import { useState } from "react";
 import type { ComponentType } from "react";
 
@@ -93,7 +94,6 @@ function Shell() {
 
           <div className="connection" role="status">
             <span className={`connection-dot ${state.connected ? "connected" : ""}`} />
-            {state.connected ? "API connected" : "Connecting to API"}
             <small>
               {meta.status} · {state.tokens.length} queued · {state.pending.length} awaiting
             </small>
@@ -109,7 +109,7 @@ function Shell() {
           </div>
         )}
 
-        <PageComponent onNavigate={setPage} />
+        <div key={page} className="page-content"><PageComponent onNavigate={setPage} /></div>
       </main>
 
       <footer className="site-footer mt-12">

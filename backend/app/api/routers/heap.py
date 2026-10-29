@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.api.deps import get_heap
-from app.core.tenant_guard import TenantGuard, is_facility_operator
+from app.core.tenant_guard import TenantGuard
 
 router = APIRouter(prefix="/heap", tags=["heap"])
 

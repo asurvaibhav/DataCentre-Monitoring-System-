@@ -13,27 +13,6 @@ export type ResourceType =
 
 export type SeverityStatus = "HEALTHY" | "WARNING" | "CRITICAL";
 
-export const RESOURCE_LABELS: Record<ResourceType, string> = {
-  STORAGE: "Storage",
-  POWER: "Power",
-  THERMAL_COOLING: "Thermal / Cooling",
-  NETWORK: "Network",
-  VM_COMPUTE: "VM Compute",
-  SOFTWARE_LICENSE: "Software License",
-};
-
-export const PHASE_LABELS: Record<string, string> = {
-  "01_RESOURCE_MONITORING": "Monitoring",
-  "02_INCIDENT_REPORTING": "Incident Reporting",
-  "03_ROOT_CAUSE_ANALYSIS": "Root Cause Analysis",
-  "04_REMEDIATION_CHECKING": "Remediation",
-  "05_RISK_ANALYSIS": "Risk Analysis",
-  "06_HUMAN_VERIFICATION": "Human Verification",
-  "07_RESOLVED": "Resolved",
-  "08_REJECTED_BY_OPERATOR": "Rejected",
-  "99_HALTED_LOOP_GUARD": "Halted (Loop Guard)",
-};
-
 export const PHASE_ORDER = [
   "01_RESOURCE_MONITORING",
   "02_INCIDENT_REPORTING",
@@ -48,6 +27,7 @@ export const PHASE_ORDER = [
 export interface IncidentTokenDTO {
   tokenId: string;
   priorityNumber: number;
+  priorityReason?: string;
   rackId: string;
   tenantId: string;
   resourceType: ResourceType;

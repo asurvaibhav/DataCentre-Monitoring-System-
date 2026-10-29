@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_ingestion
 from app.core.ao02_state_and_graph import ResourceType
-from app.core.telemetry_generator import TelemetryPoint, to_dict
+from app.core.telemetry_generator import to_dict
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 

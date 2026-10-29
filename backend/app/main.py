@@ -7,10 +7,16 @@ for proactive data center capacity exhaustion forecasting.
 
 from __future__ import annotations
 
+from pathlib import Path
+from dotenv import load_dotenv
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.deps import get_heap, get_queue, get_workflow, get_llm_provider
+from app.api.deps import get_heap, get_queue, get_llm_provider
 
 app = FastAPI(
     title="AO-02 Data Center Capacity Forecasting",

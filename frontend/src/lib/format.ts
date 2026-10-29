@@ -6,15 +6,6 @@ export function fmtPct(value: number | null | undefined, digits = 1): string {
     : "—";
 }
 
-export function fmtNumber(
-  value: number | null | undefined,
-  digits = 1,
-  unit = "",
-): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
-  return `${value.toFixed(digits)}${unit}`;
-}
-
 export function fmtWeeks(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
   if (value >= 999) return "stable";
@@ -59,4 +50,29 @@ export function truncateHash(hash: string | null | undefined, head = 10, tail = 
   if (!hash) return "—";
   if (hash.length <= head + tail + 1) return hash;
   return `${hash.slice(0, head)}…${hash.slice(-tail)}`;
+}
+
+const ACTOR_LABELS: Record<string, string> = {
+  ResourceMonitoringAgent: "Resource Monitoring Agent",
+  IncidentReportingGate: "Incident Reporting",
+  RCAAgent: "Root Cause Analysis Agent",
+  RemediationAgent: "Remediation Agent",
+  RiskAgent: "Risk Assessment Agent",
+  RiskEngine: "Risk Assessment Agent",
+  HumanOperatorGate: "Human Review",
+};
+
+export function actorLabel(actor: string): string {
+  return ACTOR_LABELS[actor] ?? actor.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+export function auditSummaryLabel(summary: string): string {
+  const labels: Record<string, string> = {
+    THERMAL_COOLING: "thermal / cooling", VM_COMPUTE: "VM compute",
+    SOFTWARE_LICENSE: "software licenses", REQUIRE_HUMAN_APPROVAL: "human approval required",
+    ALLOW_ADVISORY: "advisory allowed", PENDING_REVIEW: "pending review",
+    gate_decision: "review decision",
+  };
+  return summary.replace(/\b(?:THERMAL_COOLING|VM_COMPUTE|SOFTWARE_LICENSE|REQUIRE_HUMAN_APPROVAL|ALLOW_ADVISORY|PENDING_REVIEW|gate_decision)\b/g,
+    value => labels[value]);
 }

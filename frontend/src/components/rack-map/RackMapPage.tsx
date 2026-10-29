@@ -35,6 +35,7 @@ export function RackMapPage({ onNavigate }: RackMapPageProps) {
   const { facility, loading } = useFacility();
   const { state, actions } = useAO02Store();
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedCooling, setSelectedCooling] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
 
   const activeTokens = useMemo(
@@ -68,6 +69,9 @@ export function RackMapPage({ onNavigate }: RackMapPageProps) {
 
   const selectedRack = facility.racks.find((rack) => rack.rackId === selected) ?? null;
   const selectedIncident = selectedRack?.incidents[0] ?? null;
+
+  const selectedCoolingUnit = facility.cooling.find((c) => c.unitId === selectedCooling) ?? null;
+  const selectedCoolingIncident = selectedCoolingUnit?.incidents[0] ?? null;
 
   const tokenFor = (tokenId: string) =>
     state.tokens.find((token) => token.tokenId === tokenId) ??
@@ -135,13 +139,18 @@ export function RackMapPage({ onNavigate }: RackMapPageProps) {
           racks={facility.racks}
           cooling={facility.cooling}
           selected={selected}
-          onSelect={(rackId) =>
-            setSelected((current) => (current === rackId ? null : rackId))
-          }
+          onSelect={(rackId) => {
+            setSelectedCooling(null);
+            setSelected((current) => (current === rackId ? null : rackId));
+          }}
+          onSelectCooling={(unitId) => {
+            setSelected(null);
+            setSelectedCooling((current) => (current === unitId ? null : unitId));
+          }}
           zoom={zoom}
         />
 
-        <aside className="inspector" aria-label="Rack inspector">
+        <aside className="inspector" aria-label="Facility inspector">
           {selectedRack ? (
             <>
               <p className="eyebrow">RACK INSPECTION</p>
@@ -188,13 +197,21 @@ export function RackMapPage({ onNavigate }: RackMapPageProps) {
               </dl>
 
               {selectedIncident && (
-                <div className="inspector-actions">
+                <div className="inspector-actions space-y-2 mt-4 pt-3 border-t border-brand-line-soft">
+                  <p className="mono text-[10px] uppercase tracking-wider text-brand-muted font-medium">
+                    Incident: {selectedIncident.tokenId}
+                  </p>
                   <button
                     type="button"
-                    className="btn btn-primary btn-block"
-                    onClick={() => openIncident(selectedIncident.tokenId)}
+                    className="btn btn-primary btn-block text-xs"
+                    disabled={state.loading.pipeline}
+                    onClick={() => {
+                      actions.selectToken(selectedIncident.tokenId);
+                      onNavigate?.("hitl");
+                    }}
+                    title="Open the operator detail page for this incident"
                   >
-                    Open incident ↗
+                    Open incident details ↗
                   </button>
                 </div>
               )}
@@ -207,8 +224,65 @@ export function RackMapPage({ onNavigate }: RackMapPageProps) {
                 ← Back to facility
               </button>
               <div className="inspector-note">
-                <span aria-hidden="true">◇</span> Live telemetry · read-only
+                <span aria-hidden="true">◇</span> Live telemetry · Operator actionable
               </div>
+            </>
+          ) : selectedCoolingUnit ? (
+            <>
+              <p className="eyebrow">COOLING UNIT INSPECTION</p>
+              <h2>{shortCoolingLabel(selectedCoolingUnit.label)}</h2>
+              <p>
+                {selectedCoolingIncident
+                  ? `${selectedCoolingIncident.resourceType.replace(/_/g, " ")} incident active.`
+                  : "Cooling system operating normally."}
+              </p>
+              <dl>
+                <div>
+                  <dt>Supply Temperature</dt>
+                  <dd>{selectedCoolingUnit.supplyTempCelsius.toFixed(1)}°C</dd>
+                </div>
+                <div>
+                  <dt>Fan Speed</dt>
+                  <dd>{selectedCoolingUnit.fanSpeedRpm} RPM</dd>
+                </div>
+                <div>
+                  <dt>Cooling Headroom</dt>
+                  <dd>{(selectedCoolingUnit.maxTempCelsius - selectedCoolingUnit.supplyTempCelsius).toFixed(1)}°C</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>
+                    <span className={`tag ${STATUS_TAG[selectedCoolingUnit.status]}`}>
+                      <span className="tag-dot" aria-hidden="true" />
+                      {selectedCoolingUnit.status}
+                    </span>
+                  </dd>
+                </div>
+              </dl>
+
+              {selectedCoolingIncident && (
+                <div className="inspector-actions space-y-2 mt-4 pt-3 border-t border-brand-line-soft">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-block text-xs"
+                    disabled={state.loading.pipeline}
+                    onClick={() => {
+                      actions.selectToken(selectedCoolingIncident.tokenId);
+                      onNavigate?.("hitl");
+                    }}
+                  >
+                    Open incident details ↗
+                  </button>
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="text-button mt-2"
+                onClick={() => setSelectedCooling(null)}
+              >
+                ← Back to facility
+              </button>
             </>
           ) : (
             <>
@@ -404,8 +478,42 @@ export function RackMapPage({ onNavigate }: RackMapPageProps) {
                     <td>
                       <SeverityBadge status={severity} label={phaseLabel(incident.phase)} />
                     </td>
-                    <td className="text-right">
-                      <span className="link">Open ↗</span>
+                    <td className="text-right whitespace-nowrap">
+                      <div
+                        className="flex items-center justify-end gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void actions.runPipeline(incident.tokenId)}
+                          disabled={state.loading.pipeline}
+                          className="btn py-1 px-2 text-[10px] mono hover:border-brand-accent"
+                          title="Run agent diagnosis"
+                        >
+                          Diagnose ↗
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void actions.decide(
+                              "resolve",
+                              `Resolved by operator from facility table for ${incident.node}`,
+                              incident.tokenId,
+                            )
+                          }
+                          disabled={state.loading.decision}
+                          className="btn btn-primary py-1 px-2 text-[10px] mono"
+                          title="Resolve incident immediately"
+                        >
+                          ✓ Resolve
+                        </button>
+                        <span
+                          className="link text-xs cursor-pointer ml-1"
+                          onClick={() => openIncident(incident.tokenId)}
+                        >
+                          Open ↗
+                        </span>
+                      </div>
                     </td>
                   </tr>
                 );

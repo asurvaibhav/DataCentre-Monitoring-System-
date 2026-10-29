@@ -1,3 +1,4 @@
+import { CustomTelemetry } from "@/components/CustomTelemetry";
 // Forecasting page: choose a rack/tenant/resource series, inspect the latest
 // window, and read the projected time-to-exhaustion against the safety margin.
 
@@ -158,6 +159,7 @@ export function ForecastPage({ onNavigate }: ForecastPageProps) {
 
   return (
     <div className="mt-8">
+      <CustomTelemetry />
       <section className="panel section-pad" aria-label="Series selector">
         <div className="flex flex-wrap items-end gap-x-5 gap-y-4">
           <label className="field-label">
