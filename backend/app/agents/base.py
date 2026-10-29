@@ -14,11 +14,10 @@ from typing import Any, Optional, Type
 
 from app.core.ao02_state_and_graph import (
     HeapIncidentEnvelope,
-    IncidentToken,
     PipelinePhase,
     SharedContextHeap,
 )
-from app.core.llm_provider import LLMProvider, get_llm_provider
+from app.core.llm_provider import LLMProvider, get_llm_provider_for_agent
 
 
 class BaseAgent(ABC):
@@ -29,8 +28,12 @@ class BaseAgent(ABC):
         name: Optional[str] = None,
     ) -> None:
         self.heap = heap
-        self.llm = llm or get_llm_provider()
         self.name = name or self.__class__.__name__
+
+        if llm is not None:
+            self.llm = llm
+        else:
+            self.llm = get_llm_provider_for_agent(self.__class__.__name__)
 
     @abstractmethod
     async def run(self, token_id: str) -> dict[str, Any]:

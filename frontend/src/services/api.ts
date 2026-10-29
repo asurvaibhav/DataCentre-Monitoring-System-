@@ -57,6 +57,7 @@ function normalizeToken(raw: unknown): IncidentTokenDTO {
   return {
     tokenId: str(pick(r, "token_id", "tokenId")),
     priorityNumber: num(pick(r, "priority_number", "priorityNumber")),
+    priorityReason: str(pick(r, "priority_reason", "priorityReason")),
     rackId: str(pick(r, "rack_id", "rackId"), "—"),
     tenantId: str(pick(r, "tenant_id", "tenantId"), "—"),
     resourceType: str(pick(r, "resource_type", "resourceType"), "POWER") as ResourceType,
@@ -247,6 +248,12 @@ const OPERATOR_HEADERS = {
 };
 
 export const api = {
+  uploadTelemetry: async (file: File, storageCapacityTb?: number) =>
+    request<{ points: number; series: number; tokens_minted: number; warnings?: string[] }>(`/ingest/upload${storageCapacityTb ? `?storage_capacity_tb=${storageCapacityTb}` : ""}`, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv" },
+      body: await file.text(),
+    }),
   health: () =>
     request<{
       status: string;
@@ -356,7 +363,7 @@ export const api = {
     return normalizeEnvelope(raw);
   },
 
-  runPipeline: () =>
+  runPipeline: (tokenId?: string, signal?: AbortSignal) =>
     request<{
       status: string;
       token_id?: string;
@@ -368,11 +375,15 @@ export const api = {
       requeued?: boolean;
       message?: string;
       token?: unknown;
-    }>("/agents/run", { method: "POST", body: "{}" }),
+    }>('/agents/run', {
+      method: "POST",
+      body: JSON.stringify(tokenId ? { token_id: tokenId } : {}),
+      signal,
+    }),
 
   decide: (params: {
     tokenId: string;
-    decision: "approve" | "reject" | "defer";
+    decision: "approve" | "reject" | "defer" | "resolve";
     notes?: string;
     operator?: string;
   }) =>
@@ -389,17 +400,13 @@ export const api = {
       },
     ),
 
-  scanResources: () =>
-    request<{ status: string; tokens_minted: number }>("/ingest/scan", {
-      method: "POST",
-      body: "{}",
+  scanResources: (signal?: AbortSignal) =>
+    request<{ status: string; tokens_minted: number }>('/ingest/scan', {
+      method: 'POST',
+      body: '{}',
+      signal,
     }),
 
-  generateTelemetry: () =>
-    request<{ status: string; points: number }>("/telemetry/generate", {
-      method: "POST",
-      body: "{}",
-    }),
 };
 
 export const normalizers = { normalizeToken, normalizeEnvelope };

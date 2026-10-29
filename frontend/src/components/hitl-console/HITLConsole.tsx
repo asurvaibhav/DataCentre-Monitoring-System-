@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { SeverityBadge } from "@/components/common/SeverityBadge";
 import { useSelectedIncident } from "@/hooks/useSelectedIncident";
 import {
+  actorLabel,
+  auditSummaryLabel,
   fmtDate,
   fmtDateTime,
   fmtPct,
@@ -17,6 +19,7 @@ import {
 import { useAO02Store } from "@/store/ao02Store";
 import { PHASE_ORDER } from "@/types/ao02";
 import type { SeverityStatus } from "@/types/ao02";
+import { getPriorityTier } from "@/components/queue-visualizer/TokenQueueVisualizer";
 
 interface HITLConsoleProps {
   onNavigate?: (page: "rack-map" | "queue" | "forecast" | "hitl") => void;
@@ -46,6 +49,9 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
   const { state, actions } = useAO02Store();
   const { tokenId, token, envelope, deciding, decide } = useSelectedIncident();
   const [notes, setNotes] = useState("");
+  const [now, setNow] = useState(Date.now);
+  const elapsedPipelineSec = state.pipelineStartedAt === null
+    ? 0 : Math.max(0, (now - state.pipelineStartedAt) / 1000);
 
   const activeToken = envelope?.token ?? token;
   const isAwaiting = activeToken?.currentPhase === "06_HUMAN_VERIFICATION";
@@ -54,6 +60,13 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
   useEffect(() => {
     setNotes("");
   }, [tokenId]);
+
+  useEffect(() => {
+    setNow(Date.now());
+    if (!state.loading.pipeline) return;
+    const interval = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(interval);
+  }, [state.loading.pipeline, state.pipelineStartedAt]);
 
   if (!tokenId || !activeToken) {
     return (
@@ -117,7 +130,17 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                 status={headerStatus}
                 label={phaseLabel(activeToken.currentPhase)}
               />
-              <span className="tag tag-neutral">priority {activeToken.priorityNumber}</span>
+              {(() => {
+                const tier = getPriorityTier(activeToken);
+                return (
+                  <span
+                    className={`tag ${tier.colorClass} tracking-wider font-semibold`}
+                    title={`Min-heap score: ${activeToken.priorityNumber}`}
+                  >
+                    {tier.code} · {tier.label}
+                  </span>
+                );
+              })()}
               <span className="tag tag-neutral">
                 {activeToken.resourceType.replace(/_/g, " ").toLowerCase()}
               </span>
@@ -340,7 +363,7 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
             <div className="section-head">
               <div>
                 <p className="eyebrow">AUDIT / IMMUTABLE</p>
-                <h3>Decision trail</h3>
+                <h3>Decision history</h3>
               </div>
               <span className="pending">{auditTrail.length} entries</span>
             </div>
@@ -352,7 +375,7 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                 {auditTrail.map((entry) => (
                   <li key={entry.auditId} className="text-xs">
                     <div className="flex flex-wrap items-baseline gap-2">
-                      <span className="font-medium">{entry.actor}</span>
+                      <span className="font-medium">{actorLabel(entry.actor)}</span>
                       <span className="mono text-[9px] uppercase tracking-wide text-brand-muted">
                         {phaseLabel(entry.phase)}
                       </span>
@@ -361,7 +384,7 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
                       </span>
                     </div>
                     <p className="mt-1 text-[11px] leading-relaxed text-brand-muted">
-                      {entry.decisionSummary}
+                      {auditSummaryLabel(entry.decisionSummary)}
                     </p>
                     <p className="mono mt-1 text-[9px] text-brand-muted">
                       telemetry {truncateHash(entry.telemetryHash, 8, 4)}
@@ -510,21 +533,56 @@ export function HITLConsole({ onNavigate }: HITLConsoleProps) {
             ) : (
               <div className="space-y-3 text-xs">
                 <p className="text-[11px] leading-relaxed text-brand-muted">
-                  This incident is in phase{" "}
-                  <span className="text-brand-ink">
+                  This incident is currently in phase{" "}
+                  <span className="text-brand-ink font-medium">
                     {phaseLabel(activeToken.currentPhase)}
-                  </span>{" "}
-                  and is not awaiting a decision.
+                  </span>.
                 </p>
-                {activeToken.currentPhase === "01_RESOURCE_MONITORING" && (
-                  <p className="pending">Start the pipeline from the queue to reach the gate.</p>
-                )}
+
+                <div className="space-y-2 pt-2 border-t border-brand-line-soft">
+                  <label className="field-label">
+                    Operator notes (optional)
+                    <textarea
+                      value={notes}
+                      onChange={(event) => setNotes(event.target.value)}
+                      rows={2}
+                      maxLength={1000}
+                      placeholder="Operator resolution notes…"
+                      className="field resize-none"
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (state.loading.pipeline) {
+                        actions.stopPipeline();
+                        return;
+                      }
+                      onNavigate?.("hitl");
+                      void actions.runPipeline(activeToken.tokenId);
+                    }}
+                    className="btn btn-primary btn-block text-xs"
+                    title="Scan and run 6-phase AI multi-agent diagnosis on this incident"
+                  >
+                    {state.loading.pipeline ? "Stop scan" : "Scan & Run Agent Pipeline ↗"}
+                  </button>
+
+                  {state.loading.pipeline && (
+                    <div className="flex items-center justify-center gap-2 rounded border border-brand-accent/40 bg-brand-accent/10 px-2 py-1.5 text-[10px] mono text-brand-ink">
+                      <span className="h-2 w-2 rounded-full bg-brand-accent animate-ping" />
+                      <span>SCAN TIME:</span>
+                      <span aria-label="Pipeline elapsed time" className="tabular-nums font-bold">{elapsedPipelineSec.toFixed(1)}s</span>
+                    </div>
+                  )}
+                </div>
+
                 <button
                   type="button"
                   onClick={() => onNavigate?.("queue")}
-                  className="btn btn-block"
+                  className="btn btn-block mt-2"
                 >
-                  Open queue
+                  Back to queue
                 </button>
               </div>
             )}

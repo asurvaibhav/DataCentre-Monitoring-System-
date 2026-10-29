@@ -25,6 +25,23 @@ const SEVERITY_TEXT: Record<SeverityStatus, string> = {
   CRITICAL: "text-brand-critical",
 };
 
+export function getPriorityTier(token: IncidentTokenDTO): {
+  code: string;
+  label: string;
+  colorClass: string;
+} {
+  if (token.priorityNumber <= 25) {
+    return { code: "P1", label: "Critical", colorClass: "tag-critical" };
+  }
+  if (token.priorityNumber <= 50) {
+    return { code: "P2", label: "High", colorClass: "tag-warn" };
+  }
+  if (token.priorityNumber <= 75) {
+    return { code: "P3", label: "Medium", colorClass: "tag-neutral" };
+  }
+  return { code: "P4", label: "Low", colorClass: "tag-neutral" };
+}
+
 function Utilization({ value }: { value: number }) {
   const clamped = Math.max(0, Math.min(100, value));
   const severity = severityFromUtilization(value);
@@ -46,10 +63,14 @@ function TokenTable({
   tokens,
   emptyMessage,
   onSelect,
+  onDiagnose,
+  isDiagnosing,
 }: {
   tokens: IncidentTokenDTO[];
   emptyMessage: string;
   onSelect: (tokenId: string) => void;
+  onDiagnose: (tokenId: string) => void;
+  isDiagnosing: boolean;
 }) {
   if (tokens.length === 0) {
     return <p className="empty pending">{emptyMessage}</p>;
@@ -57,10 +78,10 @@ function TokenTable({
 
   return (
     <div className="table-wrap">
-      <table className="data-table min-w-[1040px]">
+      <table className="data-table min-w-[1100px]">
         <thead>
           <tr>
-            <th className="text-right">#</th>
+            <th className="text-left w-24">Priority</th>
             <th>Token</th>
             <th>Node · Tenant</th>
             <th>Resource</th>
@@ -70,10 +91,11 @@ function TokenTable({
             <th>Hops</th>
             <th>Phase</th>
             <th>Flags</th>
+            <th className="text-right">Human Actions</th>
           </tr>
         </thead>
         <tbody>
-          {tokens.map((token) => {
+          {tokens.map((token, index) => {
             const phaseStatus: SeverityStatus = token.awaitingHumanVerification
               ? "WARNING"
               : token.currentPhase === "07_RESOLVED"
@@ -81,6 +103,9 @@ function TokenTable({
                 : token.currentPhase === "08_REJECTED_BY_OPERATOR"
                   ? "CRITICAL"
                   : severityFromUtilization(token.utilizationPct);
+
+            const tier = getPriorityTier(token);
+            const isResolved = token.currentPhase === "07_RESOLVED";
 
             return (
               <tr
@@ -95,11 +120,22 @@ function TokenTable({
                   }
                 }}
               >
-                <td className="mono text-right tabular-nums text-brand-muted">
-                  {token.priorityNumber}
+                <td className="mono tabular-nums">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-brand-ink">
+                      #{String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span
+                      className={`tag ${tier.colorClass} text-[9px] px-1 py-0.5 tracking-wider`}
+                      title={`Priority ${token.priorityNumber}/100 · ${token.priorityReason ?? tier.label} · Lower runs first`}
+                    >
+                      {tier.code} · {token.priorityNumber}
+                    </span>
+                    <small className="text-brand-muted text-[9px] max-w-[200px]">{token.priorityReason}</small>
+                  </div>
                 </td>
                 <td>
-                  <div className="mono text-[10px]">{token.tokenId}</div>
+                  <div className="mono text-[10px] font-medium">{token.tokenId}</div>
                   <div className="mono text-[9px] text-brand-muted">
                     {fmtDateTime(token.createdAt)}
                   </div>
@@ -145,6 +181,28 @@ function TokenTable({
                       )}
                   </div>
                 </td>
+                <td className="text-right whitespace-nowrap">
+                  <div
+                    className="flex items-center justify-end gap-1.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {!isResolved ? (
+                      <button
+                        type="button"
+                        onClick={() => onDiagnose(token.tokenId)}
+                        disabled={isDiagnosing}
+                        className="btn py-1 px-2.5 text-[10px] mono tracking-wider hover:border-brand-accent"
+                        title="Run 6-phase multi-agent diagnosis on this incident"
+                      >
+                        Diagnose ↗
+                      </button>
+                    ) : (
+                      <span className="mono text-[10px] text-brand-accent font-medium">
+                        ✓ Resolved
+                      </span>
+                    )}
+                  </div>
+                </td>
               </tr>
             );
           })}
@@ -174,6 +232,11 @@ export function TokenQueueVisualizer({ onNavigate }: TokenQueueVisualizerProps) 
     onNavigate?.("hitl");
   };
 
+  const handleDiagnose = (tokenId: string) => {
+    actions.selectToken(tokenId);
+    onNavigate?.("hitl");
+  };
+
   const tabs: Array<{ id: Tab; label: string; count: number }> = [
     { id: "queued", label: "Queued", count: queued.length },
     { id: "pending", label: "Awaiting verification", count: pending.length },
@@ -182,23 +245,21 @@ export function TokenQueueVisualizer({ onNavigate }: TokenQueueVisualizerProps) 
 
   return (
     <div className="mt-8">
-      <div className="page-toolbar">
+      <div className="page-toolbar flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => void actions.runPipeline()}
-          disabled={state.loading.pipeline || queued.length === 0}
+          onClick={() => {
+            const firstToken = queued[0];
+            if (!firstToken) return;
+            actions.selectToken(firstToken.tokenId);
+            onNavigate?.("hitl");
+          }}
+          disabled={queued.length === 0}
           className="btn btn-primary"
         >
-          {state.loading.pipeline ? "Running pipeline…" : "Run top-priority incident ↗"}
+          Open top incident ↗
         </button>
-        <button
-          type="button"
-          onClick={() => void actions.scanResources()}
-          disabled={state.loading.scan}
-          className="btn"
-        >
-          {state.loading.scan ? "Scanning resources…" : "Scan resources"}
-        </button>
+
         <button
           type="button"
           onClick={() => void actions.refreshAll()}
@@ -208,8 +269,8 @@ export function TokenQueueVisualizer({ onNavigate }: TokenQueueVisualizerProps) 
           Refresh
         </button>
 
-        <p className="meta">
-          Priority 01 = highest · max {queued[0]?.maxAllowedHops ?? 8} hops
+        <p className="meta ml-auto">
+          Priority P1 = highest · Select an incident to begin diagnosis
         </p>
       </div>
 
@@ -234,12 +295,14 @@ export function TokenQueueVisualizer({ onNavigate }: TokenQueueVisualizerProps) 
         <TokenTable
           tokens={rows}
           onSelect={openToken}
+          onDiagnose={handleDiagnose}
+          isDiagnosing={state.loading.pipeline}
           emptyMessage={
             tab === "queued"
-              ? "No tokens in the priority queue. Run a resource scan to detect breaches."
+              ? "No tokens in the priority queue. Select an incident once it appears."
               : tab === "pending"
                 ? "No incidents are waiting for operator verification."
-                : "No processed incidents yet. Run a pipeline to create history."
+                : "No processed incidents yet."
           }
         />
       </div>
@@ -284,3 +347,4 @@ export function TokenQueueVisualizer({ onNavigate }: TokenQueueVisualizerProps) 
     </div>
   );
 }
+

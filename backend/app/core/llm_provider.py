@@ -13,7 +13,12 @@ import json
 import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional, Type
+
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent.parent / ".env", override=True)
 
 from pydantic import BaseModel
 
@@ -261,24 +266,125 @@ class OpenAIProvider(LLMProvider):
             temperature=temperature,
             response_format={"type": "json_object"},
         )
-        text = response.choices[0].message.content or "{}"
+        text = (response.choices[0].message.content or "{}").strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
         data = json.loads(text)
         return schema(**data)
 
 
+class FallbackProvider(LLMProvider):
+    """Wraps a primary LLM provider and falls back to a secondary provider or mock
+    if the primary throws an exception (e.g. 503 high demand, 429 quota, etc.)."""
+
+    def __init__(self, primary: LLMProvider, secondary: LLMProvider) -> None:
+        self.primary = primary
+        self.secondary = secondary
+
+    async def generate_structured(
+        self,
+        prompt: str,
+        schema: Type[BaseModel],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.2,
+    ) -> BaseModel:
+        try:
+            return await self.primary.generate_structured(prompt, schema, system_prompt, temperature)
+        except Exception as exc:
+            import logging
+            logging.warning("Primary LLM provider failed (%s); falling back to secondary provider.", exc)
+            return await self.secondary.generate_structured(prompt, schema, system_prompt, temperature)
+
+
 def get_llm_provider() -> LLMProvider:
-    """Factory: return a configured LLM provider or the deterministic mock."""
-    provider_name = os.getenv("LLM_PROVIDER", "mock").lower()
+    """Factory: return a configured LLM provider with graceful fallback or the deterministic mock."""
+    provider_name = os.getenv("LLM_PROVIDER", "auto").lower()
+    openai_key = os.getenv("OPENAI_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    mock = _MockProvider()
 
-    if provider_name == "gemini":
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key:
+    if provider_name == "mock":
+        return mock
+
+    primary: Optional[LLMProvider] = None
+    secondary: Optional[LLMProvider] = None
+
+    if provider_name == "openai":
+        if openai_key:
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            primary = OpenAIProvider(openai_key, model_name)
+            if gemini_key:
+                secondary = GeminiProvider(gemini_key, os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+        elif gemini_key:
+            primary = GeminiProvider(gemini_key, os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+        else:
+            return mock
+    elif provider_name == "gemini":
+        if gemini_key:
             model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-            return GeminiProvider(api_key, model_name)
-    elif provider_name == "openai":
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key:
-            return OpenAIProvider(api_key)
+            primary = GeminiProvider(gemini_key, model_name)
+            if openai_key:
+                secondary = OpenAIProvider(openai_key, os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+        elif openai_key:
+            primary = OpenAIProvider(openai_key, os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+        else:
+            return mock
+    else:  # auto
+        if openai_key:
+            primary = OpenAIProvider(openai_key, os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+            if gemini_key:
+                secondary = GeminiProvider(gemini_key, os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+        elif gemini_key:
+            primary = GeminiProvider(gemini_key, os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+        else:
+            return mock
 
-    # No usable provider key configured — deterministic mock keeps the pipeline runnable.
+    if primary:
+        fallback_target = secondary or mock
+        return FallbackProvider(primary, fallback_target)
+
+    return mock
+
+
+def _resolve_agent_provider_config(agent_name: str) -> tuple[str, Optional[str], Optional[str], Optional[str]]:
+    """Map each agent to its own env vars, keeping the global provider as a fallback."""
+    mapping = {
+        "ResourceMonitoringAgent": ("MONITORING", "MONITORING_GEMINI_API_KEY", "MONITORING_OPENAI_API_KEY", "MONITORING_LLM_PROVIDER"),
+        "RCAAgent": ("RCA", "RCA_GEMINI_API_KEY", "RCA_OPENAI_API_KEY", "RCA_LLM_PROVIDER"),
+        "RemediationAgent": ("REMEDIATION", "REMEDIATION_GEMINI_API_KEY", "REMEDIATION_OPENAI_API_KEY", "REMEDIATION_LLM_PROVIDER"),
+        "RiskAgent": ("RISK", "RISK_GEMINI_API_KEY", "RISK_OPENAI_API_KEY", "RISK_LLM_PROVIDER"),
+        "RiskEngine": ("RISK", "RISK_GEMINI_API_KEY", "RISK_OPENAI_API_KEY", "RISK_LLM_PROVIDER"),
+    }
+    return mapping.get(agent_name, ("GLOBAL", "GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_PROVIDER"))
+
+
+def get_llm_provider_for_agent(agent_name: str) -> LLMProvider:
+    """Return an LLM provider configured for a specific agent."""
+    _, gemini_key_var, openai_key_var, provider_var = _resolve_agent_provider_config(agent_name)
+    provider_name = os.getenv(provider_var, os.getenv("LLM_PROVIDER", "auto")).lower()
+
+    gemini_key = os.getenv(gemini_key_var) or os.getenv("GEMINI_API_KEY")
+    openai_key = os.getenv(openai_key_var) or os.getenv("OPENAI_API_KEY")
+
+    if provider_name == "mock":
+        return _MockProvider()
+
+    if provider_name == "gemini" and gemini_key:
+        return GeminiProvider(gemini_key, os.getenv(f"{gemini_key_var.replace('_API_KEY','').replace('GEMINI', '')}_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.5-flash")))
+
+    if provider_name == "openai" and openai_key:
+        return OpenAIProvider(openai_key, os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+
+    if gemini_key:
+        return GeminiProvider(gemini_key, os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+
+    if openai_key:
+        return OpenAIProvider(openai_key, os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+
     return _MockProvider()
+

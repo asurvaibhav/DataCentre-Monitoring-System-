@@ -5,12 +5,11 @@ Core Pydantic Schemas, Priority Token Queue, Shared Context Heap, and LangGraph 
 
 from __future__ import annotations
 
-import hashlib
 import heapq
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional, Tuple, TypedDict
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -179,6 +178,7 @@ class IncidentToken(BaseModel):
     priority_number: int = Field(
         ..., description="Lower integer = higher urgency in the min-heap Priority Queue"
     )
+    priority_reason: str = ""
     rack_id: str
     tenant_id: str
     resource_type: ResourceType
@@ -214,15 +214,29 @@ class PriorityTokenQueue:
         resource_type: ResourceType,
         utilization_pct: float,
         lead_time_weeks: float,
+        forecast_confidence: float = 0.0,
     ) -> int:
+        """1-100 advisory score: urgency band first, resource impact second.
+
+        P1: capacity reached or power/cooling at >=95%.
+        P2: >=95% or reliable exhaustion forecast within 24 hours.
+        P3: >=85% or reliable exhaustion forecast within seven days.
+        P4: other safety-margin breaches. Lower scores run first.
         """
-        Calculates deterministic priority score (1 to 100, lower = higher priority).
-        Combines hardware/software criticality with time-to-exhaustion urgency.
-        """
-        base_weight = RESOURCE_CRITICALITY_WEIGHTS.get(resource_type, 5) * 10
-        urgency_bonus = max(0, int((100.0 - utilization_pct) / 5.0))
-        lead_time_penalty = int(min(lead_time_weeks, 12.0) * 2)
-        return max(1, base_weight + urgency_bonus + lead_time_penalty)
+        physical = resource_type in (ResourceType.POWER, ResourceType.THERMAL_COOLING)
+        reliable = forecast_confidence >= 0.6 and 0 < lead_time_weeks < 999
+        if utilization_pct >= 100 or (physical and utilization_pct >= 95):
+            band = 0
+        elif utilization_pct >= 95 or (reliable and lead_time_weeks <= 1 / 7):
+            band = 1
+        elif utilization_pct >= 85 or (reliable and lead_time_weeks <= 1):
+            band = 2
+        else:
+            band = 3
+        impact = (RESOURCE_CRITICALITY_WEIGHTS[resource_type] - 1) * 3
+        headroom = min(4, max(0, int((100 - utilization_pct) / 5)))
+        runway = min(4, int(max(0, lead_time_weeks) * 7)) if reliable else 4
+        return band * 25 + 1 + impact + headroom + runway
 
     def enqueue(self, token: IncidentToken) -> bool:
         """Enqueues a token if an active token for the same rack/tenant/resource does not already exist."""
@@ -250,16 +264,22 @@ class PriorityTokenQueue:
         """Returns ordered list of queued tokens for the frontend Queue Dataset visualizer."""
         return [item[3] for item in sorted(self._heap, key=lambda x: (x[0], x[1]))]
 
-    def requeue(self, token: IncidentToken) -> None:
-        """Restore a token that was dequeued but failed downstream processing."""
-        dedup_key = f"{token.rack_id}:{token.tenant_id}:{token.resource_type.value}"
-        if dedup_key in self._active_resource_keys:
-            return
-        self._active_resource_keys[dedup_key] = token.token_id
-        heapq.heappush(
-            self._heap,
-            (token.priority_number, token.created_at.timestamp(), token.token_id, token),
-        )
+    def remove(self, token_id: str) -> Optional[IncidentToken]:
+        """Remove a specific token by token_id from the queue if present."""
+        found_token: Optional[IncidentToken] = None
+        new_heap = []
+        for item in self._heap:
+            if item[3].token_id == token_id:
+                found_token = item[3]
+            else:
+                new_heap.append(item)
+        if found_token:
+            heapq.heapify(new_heap)
+            self._heap = new_heap
+            dedup_key = f"{found_token.rack_id}:{found_token.tenant_id}:{found_token.resource_type.value}"
+            self._active_resource_keys.pop(dedup_key, None)
+        return found_token
+
 
 
 # ============================================================================
@@ -336,143 +356,3 @@ class AO02AgentState(TypedDict):
     should_halt: bool
     halt_reason: Optional[str]
     awaiting_human_verification: bool
-
-
-def build_ao02_workflow_blueprint(heap: SharedContextHeap):
-    """
-    Reference LangGraph node wiring for the 3 core agents and 6 operational phases.
-    (Requires `langgraph` installed in backend environment).
-    """
-    from langgraph.graph import END, StateGraph
-
-    def phase1_monitoring_node(state: AO02AgentState) -> AO02AgentState:
-        envelope = heap.get_envelope_for_agent(state["active_token_id"])
-        # Suppress false alarms on transient spikes that resolve on their own
-        if envelope.forecast.is_transient_spike:
-            envelope.token.current_phase = PipelinePhase.RESOLVED
-            heap.put_envelope(
-                envelope,
-                actor="ResourceMonitoringAgent",
-                summary="Transient spike detected and suppressed; no operator page triggered.",
-            )
-            return {
-                **state,
-                "current_phase": PipelinePhase.RESOLVED.value,
-                "should_halt": True,
-                "halt_reason": "Transient spike suppressed",
-            }
-
-        envelope.token.increment_hop(PipelinePhase.INCIDENT_REPORTING)
-        heap.put_envelope(
-            envelope,
-            actor="ResourceMonitoringAgent",
-            summary=(
-                f"Flagged {envelope.telemetry.resource_type.value} exhaustion in {envelope.telemetry.rack_id} "
-                f"(Lead time: {envelope.forecast.lead_time_weeks:.1f} weeks)."
-            ),
-        )
-        return {
-            **state,
-            "current_phase": envelope.token.current_phase.value,
-            "hop_count": envelope.token.hop_count,
-        }
-
-    def phase2_incident_reporting_node(state: AO02AgentState) -> AO02AgentState:
-        envelope = heap.get_envelope_for_agent(state["active_token_id"])
-        envelope.token.increment_hop(PipelinePhase.ROOT_CAUSE_ANALYSIS)
-        heap.put_envelope(
-            envelope,
-            actor="IncidentReportingGate",
-            summary=f"Dispatched Priority-{envelope.token.priority_number} token to RCA Agent.",
-        )
-        return {
-            **state,
-            "current_phase": envelope.token.current_phase.value,
-            "hop_count": envelope.token.hop_count,
-        }
-
-    def phase3_rca_agent_node(state: AO02AgentState) -> AO02AgentState:
-        """Invokes Gemini / OpenAI structured output to correlate tenant workloads & regime shifts."""
-        envelope = heap.get_envelope_for_agent(state["active_token_id"])
-        # LLM call populates `envelope.rca` using `RCADiagnosis` schema
-        envelope.token.increment_hop(PipelinePhase.REMEDIATION_CHECKING)
-        heap.put_envelope(
-            envelope,
-            actor="RCAAgent",
-            summary=f"Attributed trend to tenant {envelope.telemetry.tenant_id} with cross-rack correlation.",
-        )
-        return {
-            **state,
-            "current_phase": envelope.token.current_phase.value,
-            "hop_count": envelope.token.hop_count,
-        }
-
-    def phase4_remediation_agent_node(state: AO02AgentState) -> AO02AgentState:
-        """Invokes Gemini / OpenAI to generate read-only capacity mitigation simulations."""
-        envelope = heap.get_envelope_for_agent(state["active_token_id"])
-        # LLM call populates `envelope.remediation_options` (enforcing mutates_live_facility_controls=False)
-        envelope.token.increment_hop(PipelinePhase.RISK_ANALYSIS)
-        heap.put_envelope(
-            envelope,
-            actor="RemediationAgent",
-            summary="Generated non-invasive capacity rebalancing simulations.",
-        )
-        return {
-            **state,
-            "current_phase": envelope.token.current_phase.value,
-            "hop_count": envelope.token.hop_count,
-        }
-
-    def phase5_risk_analysis_node(state: AO02AgentState) -> AO02AgentState:
-        envelope = heap.get_envelope_for_agent(state["active_token_id"])
-        envelope.token.increment_hop(PipelinePhase.HUMAN_VERIFICATION)
-        heap.put_envelope(
-            envelope,
-            actor="RiskEngine",
-            summary="Evaluated blast radius and SLA risk; routed to Human-in-the-Loop verification gate.",
-        )
-        return {
-            **state,
-            "current_phase": envelope.token.current_phase.value,
-            "hop_count": envelope.token.hop_count,
-            "awaiting_human_verification": True,
-        }
-
-    def phase6_human_verification_node(state: AO02AgentState) -> AO02AgentState:
-        """Pauses or records human operator sign-off on hardware/admin capacity recommendations."""
-        envelope = heap.get_envelope_for_agent(state["active_token_id"])
-        envelope.token.current_phase = PipelinePhase.RESOLVED
-        heap.put_envelope(
-            envelope,
-            actor="HumanOperatorGate",
-            summary="Awaiting or recorded human-in-the-loop verification decision.",
-        )
-        return {
-            **state,
-            "current_phase": PipelinePhase.RESOLVED.value,
-            "awaiting_human_verification": False,
-        }
-
-    def route_after_monitoring(state: AO02AgentState) -> str:
-        if state.get("should_halt"):
-            return END
-        return "incident_reporting"
-
-    workflow = StateGraph(AO02AgentState)
-    workflow.add_node("monitoring", phase1_monitoring_node)
-    workflow.add_node("incident_reporting", phase2_incident_reporting_node)
-    workflow.add_node("rca_agent", phase3_rca_agent_node)
-    workflow.add_node("remediation_agent", phase4_remediation_agent_node)
-    workflow.add_node("risk_analysis", phase5_risk_analysis_node)
-    workflow.add_node("human_verification", phase6_human_verification_node)
-
-    workflow.set_entry_point("monitoring")
-    workflow.add_conditional_edges("monitoring", route_after_monitoring)
-    workflow.add_edge("incident_reporting", "rca_agent")
-    workflow.add_edge("rca_agent", "remediation_agent")
-    workflow.add_edge("remediation_agent", "risk_analysis")
-    workflow.add_edge("risk_analysis", "human_verification")
-    workflow.add_edge("human_verification", END)
-
-    # Compile with interrupt_before=["human_verification"] for live human-in-the-loop pause
-    return workflow.compile(interrupt_before=["human_verification"])

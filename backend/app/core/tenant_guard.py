@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, status
 
 from app.core.ao02_state_and_graph import SharedContextHeap
 
@@ -41,19 +41,3 @@ class TenantGuard:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(exc),
             )
-
-
-def require_tenant_header(request: Request) -> str:
-    """Extract X-Tenant-Id header; required on every tenant-scoped request."""
-    tenant_id = request.headers.get("X-Tenant-Id")
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing X-Tenant-Id header",
-        )
-    return tenant_id
-
-
-def is_facility_operator(request: Request) -> bool:
-    """True when the caller is a facility operator (bypasses tenant isolation)."""
-    return request.headers.get("X-Facility-Operator", "false").lower() == "true"

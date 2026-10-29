@@ -10,7 +10,7 @@ Context Heap with an immutable audit entry.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import numpy as np
@@ -43,6 +43,7 @@ class IngestionService:
         self.queue = queue
         self.generator = generator or TelemetryGenerator()
         self._points: List[TelemetryPoint] = []
+        self.uploaded_series: set[tuple] = set()
 
     def load_telemetry(self) -> List[TelemetryPoint]:
         if not self._points:
@@ -83,13 +84,13 @@ class IngestionService:
         """
         if len(points) < 10:
             return CapacityForecast(
-                lead_time_weeks=999.0,
+                lead_time_weeks=0.0 if points and points[-1].value >= hard_limit * safety_margin_pct / 100 else 999.0,
                 confidence_interval_days=(999.0, 999.0),
                 forecast_confidence_score=0.0,
             )
 
         values = np.array([p.value for p in points], dtype=float)
-        hours = np.arange(len(values), dtype=float)
+        hours = np.array([(point.timestamp - points[0].timestamp).total_seconds() / 3600 for point in points], dtype=float)
         current = float(values[-1])
         margin_limit = hard_limit * (safety_margin_pct / 100.0)
 
@@ -171,7 +172,7 @@ class IngestionService:
         rack_id: str,
         tenant_id: str,
         resource_type: ResourceType,
-        lookback_hours: int = 168,
+        lookback_hours: int = 72,
     ) -> Optional[IncidentToken]:
         """Evaluate one resource window; mint + enqueue a token on breach."""
         spec = RESOURCE_SPEC[resource_type]
@@ -180,7 +181,7 @@ class IngestionService:
         unit = str(spec["unit"])
 
         points = self.get_latest_window(rack_id, tenant_id, resource_type, lookback_hours)
-        if len(points) < 10:
+        if not points:
             return None
 
         current = float(points[-1].value)
@@ -208,12 +209,39 @@ class IngestionService:
             raw_series_sha256=series_hash,
         )
 
+        # Score capacity-normalized measurements; forecast runway to the hard limit.
+        utilization = current / hard_limit * 100
+        runway = 999.0
+        if len(points) >= 10 and forecast.forecast_confidence_score >= 0.6:
+            hours = np.array([(p.timestamp - points[0].timestamp).total_seconds() / 3600 for p in points])
+            slope = float(np.polyfit(hours, [p.value for p in points], 1)[0])
+            if slope > 1e-6:
+                runway = max(0.0, (hard_limit - current) / slope / 168)
         priority_number = self.queue.compute_priority_number(
-            resource_type, current, forecast.lead_time_weeks
+            resource_type, utilization, runway, forecast.forecast_confidence_score
         )
+        reason = f"{resource_type.value.replace('_', ' ').title()} at {utilization:.1f}% of capacity"
+        if runway < 999:
+            reason += f"; estimated exhaustion in {runway * 7:.1f} days"
+        else:
+            reason += "; insufficient evidence for exhaustion timing"
+
+        existing = next((t for t in self.queue.snapshot() if
+            (t.rack_id, t.tenant_id, t.resource_type) == (rack_id, tenant_id, resource_type)), None)
+        if existing:
+            self.queue.remove(existing.token_id)
+            existing.priority_number = priority_number
+            existing.priority_reason = reason
+            self.queue.enqueue(existing)
+            envelope = self.heap.get_envelope_for_agent(existing.token_id)
+            envelope.telemetry = telemetry
+            envelope.forecast = forecast
+            self.heap.put_envelope(envelope, actor="ResourceMonitoringAgent", summary=f"Reassessed priority {priority_number}: {reason}")
+            return None
 
         token = IncidentToken(
             priority_number=priority_number,
+            priority_reason=reason,
             rack_id=rack_id,
             tenant_id=tenant_id,
             resource_type=resource_type,
@@ -254,37 +282,67 @@ class IngestionService:
             rack_id, tenant_id, resource_type, lookback_hours
         )
 
-    def scan_all_resources(self) -> List[IncidentToken]:
-        """Scan every rack/tenant/resource combination and mint tokens on breach."""
+    def scan_all_resources(self, fast_mode: bool = True) -> List[IncidentToken]:
+        """Scan every rack/tenant/resource combination and mint tokens on breach.
+
+        Default `fast_mode` is intentionally lightweight to keep the UI responsive.
+        """
         tokens: List[IncidentToken] = []
 
-        # Rack-level shared resources (facility tenant)
-        from app.core.telemetry_generator import RACK_IDS, CRAC_UNIT_IDS
+        from app.core.telemetry_generator import RACK_IDS, CRAC_UNIT_IDS, TENANT_IDS
 
-        for rack in RACK_IDS:
+        racks = RACK_IDS[:6] if fast_mode else RACK_IDS
+        tenants = TENANT_IDS[:2] if fast_mode else TENANT_IDS
+
+        # Rack-level shared resources (facility tenant)
+        for rack in racks:
             for rt in (ResourceType.POWER, ResourceType.NETWORK):
-                tok = self.evaluate_and_mint(rack, FACILITY_TENANT, rt)
+                tok = self.evaluate_and_mint(rack, FACILITY_TENANT, rt, lookback_hours=72)
                 if tok:
                     tokens.append(tok)
 
         for crac in CRAC_UNIT_IDS:
-            tok = self.evaluate_and_mint(crac, FACILITY_TENANT, ResourceType.THERMAL_COOLING)
+            tok = self.evaluate_and_mint(crac, FACILITY_TENANT, ResourceType.THERMAL_COOLING, lookback_hours=72)
             if tok:
                 tokens.append(tok)
 
         # Per-tenant resources
-        from app.core.telemetry_generator import TENANT_IDS
-
-        for rack in RACK_IDS:
-            for tenant in TENANT_IDS:
+        for rack in racks:
+            for tenant in tenants:
                 for rt in (ResourceType.STORAGE, ResourceType.VM_COMPUTE):
-                    tok = self.evaluate_and_mint(rack, tenant, rt)
+                    tok = self.evaluate_and_mint(rack, tenant, rt, lookback_hours=72)
                     if tok:
                         tokens.append(tok)
 
-        for tenant in TENANT_IDS:
-            tok = self.evaluate_and_mint("FACILITY", tenant, ResourceType.SOFTWARE_LICENSE)
+        for tenant in tenants:
+            tok = self.evaluate_and_mint("FACILITY", tenant, ResourceType.SOFTWARE_LICENSE, lookback_hours=72)
             if tok:
                 tokens.append(tok)
+
+        if not fast_mode:
+            # Full scan path remains available if a more exhaustive review is needed.
+            for rack in [r for r in RACK_IDS if r not in racks]:
+                for rt in (ResourceType.POWER, ResourceType.NETWORK):
+                    tok = self.evaluate_and_mint(rack, FACILITY_TENANT, rt)
+                    if tok:
+                        tokens.append(tok)
+
+            for rack in [r for r in RACK_IDS if r not in racks]:
+                for tenant in TENANT_IDS:
+                    for rt in (ResourceType.STORAGE, ResourceType.VM_COMPUTE):
+                        tok = self.evaluate_and_mint(rack, tenant, rt)
+                        if tok:
+                            tokens.append(tok)
+
+            for tenant in [t for t in TENANT_IDS if t not in tenants]:
+                tok = self.evaluate_and_mint("FACILITY", tenant, ResourceType.SOFTWARE_LICENSE)
+                if tok:
+                    tokens.append(tok)
+
+        # Uploaded series must participate even outside the quick scan defaults.
+        for rack, tenant, resource in self.uploaded_series:
+            token = self.evaluate_and_mint(rack, tenant, resource)
+            if token:
+                tokens.append(token)
 
         return tokens
